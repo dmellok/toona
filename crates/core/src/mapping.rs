@@ -146,11 +146,15 @@ pub fn choose_base(
 ) -> Result<BaseChoice> {
     let for_printer = library.filaments_for_printer(printer);
     if let Some(wanted) = explicit {
+        // A base is chosen while looking at one nozzle, so it may arrive as that nozzle's
+        // preset name. The same filament under another nozzle is the same choice.
+        let alias = preset_alias(wanted);
         return for_printer
             .iter()
-            .find(|name| **name == wanted || preset_alias(name) == wanted)
+            .find(|name| **name == wanted)
+            .or_else(|| for_printer.iter().find(|name| preset_alias(name) == alias))
             .map(|name| BaseChoice { preset: name.to_string(), source: BaseSource::Explicit })
-            .ok_or_else(|| Error::PresetNotFound(format!("{wanted} (for {printer})")));
+            .ok_or_else(|| Error::BaseNotForPrinter { base: alias.to_string(), printer: printer.to_string() });
     }
 
     let vendor_tuned = vendor_preset_names(filament).into_iter().find_map(|wanted| {
@@ -216,6 +220,11 @@ pub fn build_profile_with_recipe(
     }
     let base_settings = settings.clone();
     apply_database_values(&mut settings, filament, request.variant);
+    // Settings the manufacturer published for this very printer and nozzle say more
+    // than the catalogue's ranges, so they go on last.
+    if let Some((_, entry)) = crate::tuned::tuned_for(&filament.key, request.printer) {
+        crate::tuned::apply(&mut settings, entry);
+    }
 
     let mut recipe = Recipe::between(&base_name, &base_settings, &settings, catalogue_layer);
     // The brand is a field of its own in a profile, so it is compared separately.

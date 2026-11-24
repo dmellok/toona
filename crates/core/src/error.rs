@@ -43,6 +43,9 @@ pub enum Error {
     #[error("no Bambu base profile for material \"{material}\" on printer \"{printer}\". Pass a base profile explicitly.")]
     NoBaseProfile { material: String, printer: String },
 
+    #[error("the slicer has no \"{base}\" preset for {printer}. Choose another base profile, or leave that nozzle out.")]
+    BaseNotForPrinter { base: String, printer: String },
+
     #[error("printer preset \"{0}\" not found. Run `printers` to list the available ones.")]
     PrinterNotFound(String),
 

@@ -287,6 +287,71 @@ fn uninstall_checked(slicer: &Slicer, dirs: &AppDirs, query: &str, slicer_runnin
     Ok(report)
 }
 
+/// Rewrites the settings of a profile the tool installed, keeping its name, its files
+/// and its cloud identity. Only profiles in the manifest can be updated.
+pub fn update(
+    slicer: &Slicer,
+    conf: &AppConf,
+    dirs: &AppDirs,
+    profile: &FilamentProfile,
+    recipe: Option<Recipe>,
+    options: InstallOptions,
+) -> Result<InstallReport> {
+    update_checked(slicer, conf, dirs, profile, recipe, options, slicer.is_running()?)
+}
+
+fn update_checked(
+    slicer: &Slicer,
+    conf: &AppConf,
+    dirs: &AppDirs,
+    profile: &FilamentProfile,
+    recipe: Option<Recipe>,
+    options: InstallOptions,
+    slicer_running: bool,
+) -> Result<InstallReport> {
+    let mut manifest = Manifest::load(dirs)?;
+    let not_installed = || Error::NotInstalled(profile.name.clone());
+    let index = manifest
+        .profiles
+        .iter()
+        .position(|p| p.slicer == slicer.kind.id() && p.profile_name == profile.name)
+        .ok_or_else(not_installed)?;
+    profile.validate()?;
+    let json_path = manifest.profiles[index]
+        .files
+        .iter()
+        .find(|f| f.extension().is_some_and(|ext| ext == "json") && f.exists())
+        .cloned()
+        .ok_or_else(not_installed)?;
+    let info_path = json_path.with_extension("info");
+    let mut info = Slicer::preset_info(&json_path).unwrap_or_else(PresetInfo::new_unsynced);
+
+    let will_cloud_sync = conf.uploads_new_presets();
+    let files = vec![json_path.clone(), info_path.clone()];
+    if options.dry_run {
+        return Ok(InstallReport { dry_run: true, files, backup: None, will_cloud_sync });
+    }
+    if will_cloud_sync && !options.confirm_cloud_sync {
+        return Err(Error::CloudSyncNotConfirmed { user_id: conf.preset_folder.clone() });
+    }
+    if slicer_running {
+        return Err(Error::SlicerRunning(slicer.kind.display_name()));
+    }
+
+    let backup = backup_user_folder(slicer, dirs)?;
+    // A newer time marks the file as changed. For a profile the cloud already holds,
+    // `update` is the slicer's own state for "changed here, upload it" (PROFILE_SPEC.md §4).
+    info.updated_time = PresetInfo::new_unsynced().updated_time.max(info.updated_time + 1);
+    if info.is_cloud_synced() {
+        info.sync_info = "update".to_string();
+    }
+    write_atomically(&json_path, profile.to_json().as_bytes())?;
+    write_atomically(&info_path, info.to_string().as_bytes())?;
+    manifest.profiles[index].recipe = recipe;
+    manifest.save(dirs)?;
+    Ok(InstallReport { dry_run: false, files, backup: Some(backup), will_cloud_sync })
+}
+
 /// Zips the slicer's whole `user` folder into the tool's backup folder.
 pub fn backup_user_folder(slicer: &Slicer, dirs: &AppDirs) -> Result<PathBuf> {
     let failed = |error: &dyn std::fmt::Display| Error::Backup(error.to_string());
@@ -465,6 +530,57 @@ mod tests {
         assert!(removed.cloud_synced.is_empty());
         assert_eq!(snapshot(&slicer.user_root()), before);
         assert!(Manifest::load(&dirs).unwrap().profiles.is_empty());
+    }
+
+    #[test]
+    fn update_rewrites_settings_and_keeps_the_cloud_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let slicer = fixture_slicer(temp.path());
+        let dirs = AppDirs::under(&temp.path().join("app"));
+        let conf = slicer.conf().unwrap();
+        let item = planned(&slicer, &conf, "Test PLA");
+        install_checked(&slicer, &conf, &dirs, &[item.clone()], CONFIRMED, false).unwrap();
+        let json_path = slicer.custom_filament_dir(&conf).join("Test PLA @Bambu Lab X2D 0.4 nozzle.json");
+        // Stand in for the slicer having synced it since.
+        let synced = PresetInfo { setting_id: "PFUS0123456789abcd".into(), updated_time: 100, ..PresetInfo::default() };
+        fs::write(json_path.with_extension("info"), synced.to_string()).unwrap();
+
+        let mut edited = item.profile.clone();
+        let count = edited.settings["nozzle_temperature"].as_array().unwrap().len();
+        edited.settings.insert("nozzle_temperature".into(), serde_json::json!(vec!["215"; count]));
+        let recipe = Recipe { parent: "Base".into(), changes: Vec::new() };
+
+        let unchanged = fs::read(&json_path).unwrap();
+        let dry = update_checked(&slicer, &conf, &dirs, &edited, None, InstallOptions { dry_run: true, ..CONFIRMED }, false).unwrap();
+        assert!(dry.dry_run && dry.backup.is_none());
+        assert!(matches!(
+            update_checked(&slicer, &conf, &dirs, &edited, None, CONFIRMED, true),
+            Err(Error::SlicerRunning(_))
+        ));
+        assert!(matches!(
+            update_checked(&slicer, &conf, &dirs, &edited, None, InstallOptions::default(), false),
+            Err(Error::CloudSyncNotConfirmed { .. })
+        ));
+        assert_eq!(fs::read(&json_path).unwrap(), unchanged, "refusals and dry runs write nothing");
+
+        let report = update_checked(&slicer, &conf, &dirs, &edited, Some(recipe.clone()), CONFIRMED, false).unwrap();
+        assert!(report.backup.unwrap().exists());
+        assert_eq!(fs::read_to_string(&json_path).unwrap(), edited.to_json());
+        let info = Slicer::preset_info(&json_path).unwrap();
+        assert_eq!(info.setting_id, "PFUS0123456789abcd");
+        assert_eq!(info.sync_info, "update");
+        assert!(info.updated_time > 100);
+        let manifest = Manifest::load(&dirs).unwrap();
+        assert_eq!(manifest.profiles.len(), 1);
+        assert_eq!(manifest.profiles[0].recipe, Some(recipe));
+
+        let mut stranger = edited.clone();
+        stranger.name = "Not Mine @Bambu Lab X2D 0.4 nozzle".into();
+        stranger.filament_settings_id = vec![stranger.name.clone()];
+        assert!(matches!(
+            update_checked(&slicer, &conf, &dirs, &stranger, None, CONFIRMED, false),
+            Err(Error::NotInstalled(_))
+        ));
     }
 
     #[test]

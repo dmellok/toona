@@ -1038,3 +1038,1339 @@ select.chip.on {
     transition: background-color 120ms, border-color 120ms, color 120ms;
   }
 }
+
+/* Accounts and shared profiles */
+
+.community {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.community > .label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.shared {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shared > li {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shared-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.shared-author {
+  font-weight: 600;
+}
+
+.shared-score {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  background: var(--ground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-tested {
+  color: #0b6b57;
+}
+
+.badge-official {
+  color: #2b4bee;
+}
+
+.shared-note {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.shared-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shared-actions .secondary {
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.shared-added {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.shared-votes {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.shared-votes .icon-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.shared-votes .icon-button[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.shared-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sign-in-code {
+  margin: 6px 0;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--ground);
+  text-align: center;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.sheet-buttons button.go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.sheet .ok-icon {
+  display: flex;
+}
+
+.note-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.note-field textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  resize: vertical;
+}
+
+/* A profile's own page: layers, editor, tree. Built from the design mockups. */
+
+.caps {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ghost-button {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ghost-button:disabled {
+  opacity: 0.3;
+}
+
+.pill-button {
+  min-height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+}
+
+.pill-button.outline {
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pill-button:disabled {
+  opacity: 0.4;
+}
+
+.chips-row {
+  flex: 1 1 260px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip-note {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--card);
+  font-size: 12px;
+}
+
+.tree-key {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.profile-head .icon-button {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+}
+
+.profile-title {
+  flex: 1 1 240px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+}
+
+.profile-title h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(26px, 4.4vw, 40px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.profile-title .caps {
+  font-size: 12px;
+}
+
+/* Layers */
+
+.layers-scroll {
+  overflow-x: auto;
+  /* Room for the focus ring and for the lines that run between rows. */
+  padding: 2px;
+}
+
+.layers {
+  --side: 200px;
+  min-width: calc(var(--side) + var(--columns) * 104px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.layers-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid transparent;
+  border-radius: 16px;
+}
+
+.layers-row.layer {
+  background: var(--card);
+}
+
+.layers-row.layer.off {
+  background: transparent;
+  border: 1px dashed var(--line);
+}
+
+.layers-top {
+  align-items: flex-end;
+  margin-bottom: 2px;
+}
+
+.layers-side {
+  flex: 0 0 var(--side);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 6px 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.layers-top .layers-side {
+  padding: 0 0 18px 4px;
+}
+
+.layers-number {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.layers-name {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.layers-name > span {
+  display: block;
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.layers-name small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layers-row.off .layers-number,
+.layers-row.off .layers-name {
+  opacity: 0.4;
+}
+
+.layers-col {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+  text-align: center;
+}
+
+.layers-label {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layers-result {
+  height: 56px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.layers-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The line that carries the winning value up to "What prints". */
+.layers-line {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  bottom: -8px;
+  width: 2px;
+  margin-left: -1px;
+}
+
+.layers-line.to-chip {
+  bottom: 50%;
+}
+
+.layers-chip {
+  position: relative;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-decoration: line-through;
+}
+
+.layers-chip.wins {
+  color: #fff;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.layers-chip.off {
+  border: 1px dashed #b5b5ae;
+  background: var(--ground);
+  color: #8b8f94;
+  text-decoration: none;
+}
+
+/* Edit */
+
+.editor {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.editor-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin-bottom: 10px;
+}
+
+.editor-swatch {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+}
+
+.editor-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.editor-title h2 {
+  margin: 0 0 2px;
+  font-family: var(--display);
+  font-size: clamp(24px, 3.6vw, 32px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.editor-title .caps {
+  font-size: 12px;
+}
+
+.save-to {
+  display: flex;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--hairline);
+}
+
+.save-to button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.save-to button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--ink);
+}
+
+.editor-card {
+  background: var(--card);
+  border-radius: 20px;
+  padding: 6px 22px 10px;
+}
+
+.editor-group {
+  padding: 18px 0 4px;
+}
+
+.editor-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  min-height: 60px;
+  border-bottom: 1px solid #ededeb;
+}
+
+.editor-label {
+  flex: 0 0 170px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.track {
+  flex: 1 1 220px;
+  position: relative;
+  height: 28px;
+}
+
+.track > span {
+  position: absolute;
+  top: 12px;
+  height: 4px;
+}
+
+.track-bar {
+  left: 0;
+  right: 0;
+  border-radius: 2px;
+  background: var(--hairline);
+}
+
+.track-unsafe {
+  right: 0;
+  border-radius: 0 2px 2px 0;
+  background: #f3c99b;
+}
+
+.track > .track-tick {
+  top: 5px;
+  width: 2px;
+  height: 18px;
+  margin-left: -1px;
+  background: #8b8f94;
+}
+
+.track > .track-thumb {
+  top: 5px;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.stepper {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.stepper .ghost-button {
+  color: var(--ink);
+}
+
+.stepper .ghost-button.reset {
+  color: var(--muted);
+}
+
+.stepper-value {
+  width: 92px;
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* The value can be typed as well as stepped; it looks like plain text until focused. */
+.stepper-value input {
+  min-width: 0;
+  max-width: 72px;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.stepper-value input:focus-visible {
+  outline: none;
+  border-bottom-color: currentColor;
+}
+
+.stepper-value input[aria-invalid="true"] {
+  border-bottom-color: var(--warn);
+}
+
+.editor-error {
+  flex: 1 1 100%;
+  padding-bottom: 8px;
+  color: #b45309;
+  font-size: 13px;
+  text-align: right;
+}
+
+.editor-more {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.editor-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 0;
+  background: var(--ground);
+}
+
+/* Tree */
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.tree-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tree-legend > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-scroll {
+  overflow-x: auto;
+  padding: 4px;
+}
+
+.tree-canvas {
+  position: relative;
+}
+
+.tree-canvas > svg {
+  position: absolute;
+  inset: 0;
+}
+
+.tree-node {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 0 10px 0 12px;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  background: var(--card);
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.tree-node .tree-key {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+.tree-node[aria-pressed="true"] {
+  border-color: var(--ink);
+}
+
+.tree-node.faded {
+  opacity: 0.55;
+}
+
+.tree-name {
+  flex: 1 1 0;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tree-warn {
+  color: #b45309;
+}
+
+.tree-detail {
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.tree-detail-name {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.tree-detail .chips-row {
+  flex: 0 0 auto;
+}
+
+.tree-detail .pill-button {
+  align-self: flex-start;
+}
+
+.sheet .chip-note {
+  background: var(--ground);
+}
+
+.sheet.wide {
+  max-width: 900px;
+}
+
+.shared-history {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.link-search {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.link-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(300px, 40vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.link-list button {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--ground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.link-list button[aria-pressed="true"] {
+  border-color: var(--ink);
+}
+
+.link-list .mono {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Every window size. Spacing follows the window, long rows wrap, and below 900px the
+   selected filament opens over the list instead of sitting far beneath it. */
+
+.header {
+  gap: 10px clamp(10px, 2.2vw, 28px);
+  padding: clamp(10px, 2vw, 18px) clamp(12px, 3vw, 28px);
+}
+
+.view {
+  padding: 6px clamp(12px, 3vw, 28px) 40px;
+}
+
+.grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(236px, 100%), 1fr));
+}
+
+.row .text {
+  flex: 1 1 220px;
+}
+
+.sheet-buttons {
+  flex-wrap: wrap;
+}
+
+.sheet-buttons button {
+  flex: 1 1 120px;
+}
+
+.detail-back {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .browse .detail {
+    display: none;
+  }
+
+  .browse .detail.open {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    max-width: none;
+    border-radius: 0;
+    padding: clamp(12px, 3vw, 28px);
+    overflow-y: auto;
+  }
+
+  .browse .detail.open > * {
+    flex-shrink: 0;
+  }
+
+  .detail-back {
+    display: flex;
+    align-self: flex-start;
+  }
+
+  .swatch {
+    height: clamp(120px, 26vh, 208px);
+  }
+
+  .scrim {
+    padding: 12px;
+  }
+
+  .sheet {
+    padding: 20px;
+  }
+}
+
+@media (max-width: 620px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+    gap: 10px;
+  }
+
+  /* The header keeps the logo, tabs and controls on two tidy lines. */
+  .header .spacer {
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .header .pill > span:not(.mono),
+  .notice span {
+    font-size: 13px;
+  }
+
+  .in-studio h1 {
+    font-size: 28px;
+  }
+
+  .row .secondary {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .layers {
+    --side: 148px;
+  }
+
+  .layers-side {
+    gap: 8px;
+    padding-left: 8px;
+  }
+
+  .editor-card {
+    padding: 4px 14px 8px;
+  }
+
+  .editor-label {
+    flex: 1 1 100%;
+    padding-top: 10px;
+  }
+
+  .track {
+    flex-basis: 100%;
+  }
+
+  .stepper {
+    margin-left: auto;
+  }
+
+  .sign-in-code {
+    font-size: 22px;
+  }
+}
+
+/* Refinements after trying each screen from 360px to 1900px wide */
+
+.editor-alias {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.stepper-value {
+  white-space: pre;
+}
+
+/* The bar reaches down over the page's bottom padding, so nothing shows beneath it. */
+.editor-foot {
+  bottom: -40px;
+  padding-bottom: 50px;
+}
+
+/* Layer names stay put while the settings scroll sideways. */
+.layers-side {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  border-radius: 16px;
+  background: var(--ground);
+}
+
+.layers-row.layer:not(.off) .layers-side {
+  background: var(--card);
+}
+
+.layers-name > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 520px) {
+  /* Sign in and Advanced become icon buttons; their names stay for screen readers. */
+  .header .pill:not(.pill-select) > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .header .pill:not(.pill-select) {
+    position: relative;
+    padding-inline: 13px;
+  }
+
+  .header .spacer {
+    flex-basis: 0;
+  }
+
+  .editor-foot .chips-row {
+    flex-basis: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  /* Wide enough for "Manufacturer" beside its number and eye. */
+  .layers {
+    --side: 182px;
+  }
+
+  .layers-name > span {
+    font-size: 14px;
+  }
+
+  .layers-side .ghost-button {
+    width: 36px;
+  }
+}
+
+/* ---- Feedback round: optional colour, base picker, spec comparison, brand tags, printer groups ---- */
+
+.small {
+  font-size: 13px;
+}
+
+/* A hairline under the colour band, so a white filament doesn't run into the white tile. */
+.stripes {
+  border-bottom: 1px solid var(--line);
+}
+
+.card-meta .material {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #ededea;
+}
+
+.card-meta .material.pla {
+  background: #e3f1e6;
+  color: #1f5a33;
+}
+
+.card-meta .material.petg {
+  background: #e1ecf8;
+  color: #1d4e86;
+}
+
+.card-meta .material.abs {
+  background: #fbe9da;
+  color: #8a4b00;
+}
+
+.card-meta .material.tpu {
+  background: #eee6fa;
+  color: #5b2ea6;
+}
+
+.card-meta .material.eng {
+  background: #ece9e2;
+  color: #4a4338;
+}
+
+.brand-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -6px;
+}
+
+.brand-tag {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.brand-tag.on {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.clear-colour {
+  align-self: flex-start;
+  min-height: 32px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fact-edit {
+  margin: -6px -8px -6px 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-weight: 500;
+  text-align: right;
+}
+
+.fact-edit:hover,
+.fact-edit[aria-expanded="true"] {
+  background: var(--ground);
+}
+
+.base-picker {
+  margin-top: -8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.base-search {
+  position: relative;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.base-search svg {
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  color: var(--muted);
+}
+
+.base-search input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px 0 38px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--ink);
+}
+
+.base-options {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  max-height: 264px;
+  overflow-y: auto;
+}
+
+.base-group {
+  padding: 10px 8px 4px;
+}
+
+.base-none {
+  padding: 12px 8px;
+}
+
+.base-options button {
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+}
+
+.base-options button > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.base-options button .muted {
+  font-size: 12px;
+  text-align: right;
+}
+
+.base-options button[data-active="true"] {
+  background: var(--ground);
+}
+
+.base-options button[aria-selected="true"] {
+  font-weight: 600;
+}
+
+.nozzle:disabled {
+  border-style: dashed;
+  color: var(--muted);
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+.spec {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.spec th,
+.spec td {
+  padding: 7px 8px 7px 0;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  font-weight: 400;
+  vertical-align: middle;
+}
+
+.spec thead th {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.spec td:last-child,
+.spec th:last-child {
+  width: 20px;
+  padding-right: 0;
+  text-align: right;
+}
+
+.spec svg {
+  display: block;
+}
+
+.spec-ok {
+  color: #0b6b57;
+}
+
+.spec-off {
+  color: var(--warn);
+}
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.flow-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--hairline);
+}
+
+.flow-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  background: var(--ink);
+}
+
+.flow-fill.off {
+  background: var(--warn);
+}
+
+/* Where the manufacturer's limit sits on the bar. */
+.flow-limit {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--warn);
+}
+
+.flow-note {
+  font-size: 13px;
+}
+
+.printer-group + .printer-group {
+  margin-top: 22px;
+}
+
+.printer-head {
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.printer-head .count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hairline);
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+/* The manufacturer published settings for this very printer. */
+.tuned {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--ground);
+  font-weight: 500;
+}
+
+.tuned svg {
+  flex: none;
+  margin-top: 1px;
+  color: #0b6b57;
+}
+
+.tuned .muted {
+  font-weight: 400;
+}

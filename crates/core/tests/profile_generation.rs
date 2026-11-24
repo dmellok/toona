@@ -328,6 +328,24 @@ fn base_profile_follows_material_and_traits() {
 }
 
 #[test]
+fn a_base_chosen_for_one_nozzle_is_used_for_the_others() {
+    let library = library();
+    let catalogue = catalogue();
+    let filament = catalogue.find("esun/PLA/pla_plus").unwrap();
+    // The window sends the preset name it showed for the first nozzle.
+    let chosen = "Generic PLA @BBL X2D 0.4 nozzle";
+
+    let same = choose_base(&library, filament, PRINTER, Some(chosen)).unwrap();
+    assert_eq!((same.preset.as_str(), same.source), (chosen, BaseSource::Explicit));
+    let other = choose_base(&library, filament, "Bambu Lab X2D 0.2 nozzle", Some(chosen)).unwrap();
+    assert_eq!(other.preset, "Generic PLA @BBL X2D 0.2 nozzle");
+
+    // The slicer has no silk preset for the 0.2 mm nozzle: the refusal names the base.
+    let missing = choose_base(&library, filament, "Bambu Lab X2D 0.2 nozzle", Some("Generic PLA Silk @BBL X2D 0.4 nozzle"));
+    assert!(matches!(missing, Err(Error::BaseNotForPrinter { base, .. }) if base == "Generic PLA Silk"));
+}
+
+#[test]
 fn a_vendor_tuned_preset_for_the_exact_product_beats_the_generic_one() {
     let library = library();
     let catalogue = catalogue();

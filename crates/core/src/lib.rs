@@ -13,6 +13,7 @@ pub mod profile;
 pub mod recipe;
 pub mod slicer;
 pub mod system;
+pub mod tuned;
 
 pub use catalogue::{BarcodeMatch, Catalogue, CatalogueFilament, MaterialClass, Refresh, SearchFilter, Variant};
 pub use convert::{convert_inherited, convert_inherited_with_recipes, ConvertRequest};

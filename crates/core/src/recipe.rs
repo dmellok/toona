@@ -15,6 +15,8 @@ pub enum Layer {
     Manufacturer,
     /// One colour of the product.
     Colour,
+    /// Settings another person shared.
+    Community,
     /// The user's own settings.
     You,
 }

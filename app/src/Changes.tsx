@@ -6,8 +6,8 @@ const LABELS: Record<string, string> = {
   filament_vendor: "Brand",
   filament_density: "Density",
   filament_diameter: "Diameter",
-  filament_flow_ratio: "Flow ratio",
-  filament_max_volumetric_speed: "Max volumetric speed",
+  filament_flow_ratio: "Flow",
+  filament_max_volumetric_speed: "Max speed",
   nozzle_temperature: "Nozzle",
   nozzle_temperature_initial_layer: "Nozzle, first layer",
   nozzle_temperature_range_low: "Nozzle range, low",
@@ -18,19 +18,20 @@ const LABELS: Record<string, string> = {
   supertack_plate_temp_initial_layer: "SuperTack plate, first layer",
   eng_plate_temp: "Engineering plate",
   eng_plate_temp_initial_layer: "Engineering plate, first layer",
-  hot_plate_temp: "Smooth plate",
-  hot_plate_temp_initial_layer: "Smooth plate, first layer",
-  textured_plate_temp: "Textured plate",
-  textured_plate_temp_initial_layer: "Textured plate, first layer",
+  hot_plate_temp: "Smooth bed",
+  hot_plate_temp_initial_layer: "Smooth bed, first layer",
+  textured_plate_temp: "Textured bed",
+  textured_plate_temp_initial_layer: "Textured bed, first layer",
   pressure_advance: "Pressure advance",
   fan_min_speed: "Fan, minimum",
-  fan_max_speed: "Fan, maximum",
+  fan_max_speed: "Fan",
   filament_retraction_length: "Retraction length",
 };
 
-const LAYERS: Record<Change["layer"], { name: string; colour: string }> = {
+export const LAYERS: Record<Change["layer"], { name: string; colour: string }> = {
   manufacturer: { name: "Manufacturer", colour: "#15171A" },
   colour: { name: "Colour", colour: "#7C3AED" },
+  community: { name: "Community", colour: "#2B4BEE" },
   you: { name: "You", colour: "#0B6B57" },
 };
 
