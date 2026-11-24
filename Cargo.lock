@@ -4668,7 +4668,7 @@ checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
 name = "toona"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -4677,7 +4677,7 @@ dependencies = [
 
 [[package]]
 name = "toona-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "directories",
  "reqwest",
@@ -4691,7 +4691,7 @@ dependencies = [
 
 [[package]]
 name = "toona-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "directories",
@@ -4708,7 +4708,7 @@ dependencies = [
 
 [[package]]
 name = "toona-sitegen"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "clap",

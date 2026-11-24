@@ -368,8 +368,10 @@ export default function App() {
       .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
   };
 
-  const share = (row: Added | Own) => {
-    if (!user) return void signIn(() => share(row));
+  // `signedIn` is passed when sharing continues straight after signing in, because
+  // this function still holds the signed-out state it was created with.
+  const share = (row: Added | Own, signedIn = user !== null) => {
+    if (!signedIn) return void signIn(() => share(row, true));
     setSheet({
       kind: "share",
       label: row.alias,
@@ -386,7 +388,7 @@ export default function App() {
           const error = asUiError(raw);
           if (error.kind === "sign_in") {
             setAccount({ available: true, user: null });
-            void signIn(() => share(row));
+            void signIn(() => share(row, true));
           } else setSheet({ kind: "error", message: error.message });
         } finally {
           setBusy(false);

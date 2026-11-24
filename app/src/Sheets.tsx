@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle, CloudArrowUp, GithubLogo, Warning } from "@phosphor-icons/react";
 import { api, type Card, type Shared, type User } from "./api";
 import { Tree, versionNodes } from "./Tree";
@@ -32,15 +32,23 @@ export function Sheets({ sheet, studioName, close }: Props) {
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
 
+  // Fields start empty for each sheet that opens, and only then: the app re-renders
+  // every few seconds while a sheet is up, which must not wipe what was typed.
   useEffect(() => {
-    if (!sheet) return;
     setDontAsk(false);
     setNote("");
     setQuery("");
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && close();
+  }, [sheet]);
+
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  const isOpen = sheet !== null;
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, close]);
+  }, [isOpen]);
 
   if (!sheet) return null;
 
