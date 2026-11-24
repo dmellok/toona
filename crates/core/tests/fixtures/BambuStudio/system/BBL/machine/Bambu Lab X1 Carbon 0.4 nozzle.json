@@ -1,0 +1,13 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab X1 Carbon 0.4 nozzle",
+    "from": "system",
+    "instantiation": "true",
+    "inherits": "fdm_bbl_3dp_001_common",
+    "setting_id": "GM001",
+    "printer_model": "Bambu Lab X1 Carbon",
+    "printer_variant": "0.4",
+    "nozzle_diameter": [
+        "0.4"
+    ]
+}

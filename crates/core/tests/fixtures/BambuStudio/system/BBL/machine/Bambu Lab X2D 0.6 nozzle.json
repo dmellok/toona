@@ -1,0 +1,14 @@
+{
+    "type": "machine",
+    "name": "Bambu Lab X2D 0.6 nozzle",
+    "from": "system",
+    "instantiation": "true",
+    "inherits": "Bambu Lab X2D 0.4 nozzle",
+    "setting_id": "GM047",
+    "printer_model": "Bambu Lab X2D",
+    "printer_variant": "0.6",
+    "nozzle_diameter": [
+        "0.6",
+        "0.6"
+    ]
+}

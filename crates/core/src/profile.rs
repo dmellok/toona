@@ -1,0 +1,252 @@
+//! A user filament profile and its `.info` sidecar, as specified in PROFILE_SPEC.md.
+
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use md5::{Digest, Md5};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::error::{Error, Result};
+use crate::system::{preset_alias, VARIANT_KEYS};
+
+/// Keys that belong to system presets or to the `.info` file, never to a user profile.
+const FORBIDDEN_KEYS: &[&str] = &["setting_id", "instantiation", "type", "include", "base_id"];
+
+/// Characters that cannot appear in a file name on at least one supported OS.
+const FORBIDDEN_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+/// A root ("custom") user filament profile: PROFILE_SPEC.md §3.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilamentProfile {
+    pub name: String,
+    pub from: String,
+    pub inherits: String,
+    pub version: String,
+    pub filament_id: String,
+    pub filament_settings_id: Vec<String>,
+    pub compatible_printers: Vec<String>,
+    pub filament_vendor: Vec<String>,
+    pub filament_type: Vec<String>,
+    /// Every other filament option: strings, or arrays of strings.
+    #[serde(flatten)]
+    pub settings: BTreeMap<String, Value>,
+}
+
+impl FilamentProfile {
+    /// The filament's display name: the profile name up to `@`.
+    pub fn alias(&self) -> &str {
+        preset_alias(&self.name)
+    }
+
+    pub fn file_stem(&self) -> &str {
+        &self.name
+    }
+
+    /// Checks the profile against the spec. Returns every problem found, not just the first.
+    pub fn validate(&self) -> Result<()> {
+        let mut problems = Vec::new();
+        let mut check = |ok: bool, problem: &str| {
+            if !ok {
+                problems.push(problem.to_string());
+            }
+        };
+
+        let printer = self.compatible_printers.first().map(String::as_str).unwrap_or("");
+        check(!self.alias().is_empty(), "name has no filament name before '@'");
+        check(
+            !self.name.contains(FORBIDDEN_NAME_CHARS),
+            "name contains a character that is not allowed in file names",
+        );
+        check(self.name.matches('@').count() == 1, "name must contain exactly one '@'");
+        check(self.from == "User", "from must be \"User\"");
+        check(self.inherits.is_empty(), "inherits must be empty (root preset)");
+        check(is_dotted_version(&self.version), "version must be dotted numbers, e.g. 2.9.0.83");
+        check(
+            is_user_filament_id(&self.filament_id),
+            "filament_id must be 'P' followed by 7 lowercase hex digits",
+        );
+        check(
+            self.filament_settings_id.len() == 1 && self.filament_settings_id[0] == self.name,
+            "filament_settings_id must be [name]",
+        );
+        check(self.compatible_printers.len() == 1, "compatible_printers must name one printer preset");
+        check(
+            !printer.is_empty() && self.name == format!("{} @{printer}", self.alias()),
+            "name must be \"<filament name> @<printer preset>\"",
+        );
+        check(
+            self.filament_vendor.len() == 1 && !self.filament_vendor[0].trim().is_empty(),
+            "filament_vendor must hold one non-empty value",
+        );
+        check(
+            self.filament_type.len() == 1 && !self.filament_type[0].trim().is_empty(),
+            "filament_type must hold one non-empty value",
+        );
+
+        for key in FORBIDDEN_KEYS {
+            check(!self.settings.contains_key(*key), &format!("{key} must not be present"));
+        }
+        for (key, value) in &self.settings {
+            let stringly = match value {
+                Value::String(_) => true,
+                Value::Array(items) => items.iter().all(Value::is_string),
+                _ => false,
+            };
+            check(stringly, &format!("{key} must be a string or an array of strings"));
+        }
+
+        let variants = self.array_len("filament_extruder_variant").unwrap_or(1);
+        for key in VARIANT_KEYS {
+            if let Some(len) = self.array_len(key) {
+                check(len == variants, &format!("{key} has {len} values for {variants} extruder variants"));
+            }
+        }
+
+        let low = self.first_number("nozzle_temperature_range_low");
+        let high = self.first_number("nozzle_temperature_range_high");
+        if let (Some(low), Some(high)) = (low, high) {
+            check(low <= high, "nozzle_temperature_range_low is above nozzle_temperature_range_high");
+        }
+        for key in ["filament_density", "filament_diameter"] {
+            if self.settings.contains_key(key) {
+                check(
+                    self.first_number(key).is_some_and(|v| v > 0.0),
+                    &format!("{key} must be a positive number"),
+                );
+            }
+        }
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::InvalidProfile { name: self.name.clone(), problems })
+        }
+    }
+
+    /// The file contents as Studio writes them: sorted keys, 4-space indent, trailing newline.
+    pub fn to_json(&self) -> String {
+        // Going through `Value` sorts the keys (serde_json maps are ordered by key).
+        let value = serde_json::to_value(self).expect("profile serializes to JSON");
+        let mut out = Vec::new();
+        let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+        let mut serializer = serde_json::Serializer::with_formatter(&mut out, formatter);
+        value.serialize(&mut serializer).expect("writing JSON to memory");
+        out.push(b'\n');
+        String::from_utf8(out).expect("serde_json emits UTF-8")
+    }
+
+    pub fn from_json(text: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(text)
+    }
+
+    fn array_len(&self, key: &str) -> Option<usize> {
+        self.settings.get(key)?.as_array().map(Vec::len)
+    }
+
+    fn first_number(&self, key: &str) -> Option<f64> {
+        match self.settings.get(key)? {
+            Value::String(s) => s.parse().ok(),
+            Value::Array(items) => items.first()?.as_str()?.parse().ok(),
+            _ => None,
+        }
+    }
+}
+
+/// The `.info` file next to a profile: PROFILE_SPEC.md §4.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PresetInfo {
+    pub sync_info: String,
+    pub user_id: String,
+    pub setting_id: String,
+    pub base_id: String,
+    pub updated_time: u64,
+}
+
+impl PresetInfo {
+    /// The sidecar for a profile that has never been synced.
+    pub fn new_unsynced() -> Self {
+        let updated_time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        Self { updated_time, ..Self::default() }
+    }
+
+    pub fn parse(text: &str) -> Self {
+        let mut info = Self::default();
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let value = value.trim().to_string();
+            match key.trim() {
+                "sync_info" => info.sync_info = value,
+                "user_id" => info.user_id = value,
+                "setting_id" => info.setting_id = value,
+                "base_id" => info.base_id = value,
+                "updated_time" => info.updated_time = value.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+        info
+    }
+
+    /// Whether Bambu Cloud holds a copy of the profile.
+    pub fn is_cloud_synced(&self) -> bool {
+        !self.setting_id.is_empty()
+    }
+}
+
+impl std::fmt::Display for PresetInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "sync_info = {}", self.sync_info)?;
+        writeln!(f, "user_id = {}", self.user_id)?;
+        writeln!(f, "setting_id = {}", self.setting_id)?;
+        writeln!(f, "base_id = {}", self.base_id)?;
+        writeln!(f, "updated_time = {}", self.updated_time)
+    }
+}
+
+/// Studio's id for a custom filament: `P` + the first 7 hex digits of
+/// `md5("<alias>@<user_id>")`, or of `md5("<alias>")` when no account is signed in.
+pub fn user_filament_id(alias: &str, user_id: Option<&str>) -> String {
+    hashed_filament_id(alias, user_id, 0)
+}
+
+/// As [`user_filament_id`], with a salt for the rare case where two different
+/// filament names hash to the same id.
+pub(crate) fn hashed_filament_id(alias: &str, user_id: Option<&str>, salt: u32) -> String {
+    let mut input = alias.to_string();
+    if let Some(user_id) = user_id {
+        input.push('@');
+        input.push_str(user_id);
+    }
+    if salt > 0 {
+        input.push_str(&format!("#{salt}"));
+    }
+    let digest = Md5::digest(input.as_bytes());
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("P{}", &hex[..7])
+}
+
+/// Makes a string safe to use as the filament-name part of a profile name.
+pub fn sanitize_alias(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '|' => '-',
+            '@' | '*' | '?' | '"' | '<' | '>' => ' ',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_user_filament_id(id: &str) -> bool {
+    id.len() == 8
+        && id.starts_with('P')
+        && id[1..].chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+fn is_dotted_version(version: &str) -> bool {
+    let parts: Vec<&str> = version.split('.').collect();
+    (3..=4).contains(&parts.len())
+        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}

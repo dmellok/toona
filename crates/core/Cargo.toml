@@ -1,0 +1,21 @@
+[package]
+name = "toona-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Catalogue, profile generation, slicer detection and install logic for Toona"
+
+[dependencies]
+chrono = "0.4.45"
+directories = "6.0.0"
+flate2 = "1.1.11"
+md-5 = "0.11.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = "0.40.4"
+thiserror = "2.0.21"
+zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
