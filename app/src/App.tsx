@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, GithubLogo, Printer as PrinterIcon, SlidersHorizontal, Warning } from "@phosphor-icons/react";
+import { CaretDown, GithubLogo, Printer as PrinterIcon, Warning } from "@phosphor-icons/react";
 import {
   api,
   asUiError,
@@ -498,15 +498,18 @@ export default function App() {
 
         <button
           type="button"
-          className="pill"
-          aria-pressed={advanced}
+          className="pill switch"
+          role="switch"
+          aria-checked={advanced}
           onClick={() => {
             store("toona.advanced", !advanced);
             setAdvanced(!advanced);
           }}
         >
-          <SlidersHorizontal size={18} aria-hidden />
           <span>Advanced</span>
+          <span className="switch-track" aria-hidden>
+            <span className="switch-thumb" />
+          </span>
         </button>
       </header>
 

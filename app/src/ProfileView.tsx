@@ -43,6 +43,17 @@ const COLUMNS: { label: string; keys: string[] }[] = [
   { label: "Fan", keys: ["fan_max_speed"] },
 ];
 
+/** A setting's value; a colour code gets a dot of that colour beside it, since the pill itself is the layer's colour. */
+function Value({ text }: { text: string }) {
+  if (!/^#[0-9a-f]{6}$/i.test(text)) return <>{text}</>;
+  return (
+    <>
+      <span className="value-dot" style={{ background: text }} aria-hidden />
+      {text}
+    </>
+  );
+}
+
 /** Every layer as a row, every setting as a column: who set what, and what ends up printing. */
 function Layers({ profile }: { profile: Profile }) {
   const [hidden, setHidden] = useState<Kind[]>([]);
@@ -90,7 +101,7 @@ function Layers({ profile }: { profile: Profile }) {
               <div key={column.label} className="layers-col">
                 <div className="layers-label">{column.label}</div>
                 <div className="layers-result mono" style={{ background: KINDS[winner].colour }}>
-                  {column.values.get(winner)}
+                  <Value text={column.values.get(winner) ?? ""} />
                 </div>
               </div>
             );
@@ -134,7 +145,7 @@ function Layers({ profile }: { profile: Profile }) {
                         className={off ? "layers-chip off mono" : wins ? "layers-chip wins mono" : "layers-chip mono"}
                         style={wins && !off ? { background: colour, borderColor: colour } : undefined}
                       >
-                        {value}
+                        <Value text={value} />
                       </span>
                     )}
                   </div>
