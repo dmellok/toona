@@ -3,7 +3,7 @@ import { ArrowLeft, Check, CheckCircle, DownloadSimple, Package, PencilSimple, S
 import type { Detail, Printer, Shared, Spec, Variant } from "./api";
 import { BasePicker } from "./BasePicker";
 import { Community } from "./Community";
-import { Changes } from "./Changes";
+import { Changes, withRange } from "./Changes";
 import { dotStyle, swatchStyle } from "./colour";
 
 interface Props {
@@ -23,6 +23,12 @@ interface Props {
   onBase: (preset: string | null) => void;
   /** Names of bases chosen before, most recent first. */
   recentBases: string[];
+  /** A name the person gave this filament, in place of the catalogue's. */
+  name: string | null;
+  onName: (name: string | null) => void;
+  /** Use the manufacturer's settings for one nozzle on the others it published nothing for. */
+  borrowTuned: boolean;
+  onBorrowTuned: (on: boolean) => void;
   busy: boolean;
   onInstall: () => void;
   onRemove: () => void;
@@ -48,12 +54,18 @@ function Compare({ spec, builtOn }: { spec: Spec[]; builtOn: string }) {
   const flow = spec.find((row) => row.key === "flow");
   let note: string | null = null;
   if (flow?.at != null) {
-    if (flow.limit == null) note = `The manufacturer lists no limit, so this is ${builtOn}'s.`;
-    else if (flow.base != null && flow.base > flow.limit) note = `Lowered from ${builtOn}'s ${flow.base} to the manufacturer's limit.`;
-    else if (flow.at < flow.limit) note = `${builtOn} holds it below the manufacturer's ${flow.limit}.`;
+    if (flow.limit == null) note = `The manufacturer lists no limit, so this profile keeps ${builtOn}'s.`;
+    else if (flow.base != null && flow.base > flow.limit) note = `Lowered from ${builtOn}'s to the manufacturer's limit.`;
+    else if (flow.at < flow.limit) note = `${builtOn} is tuned below the manufacturer's limit, and this profile keeps that.`;
   }
-  const top = Math.max(flow?.at ?? 0, flow?.limit ?? 0, flow?.base ?? 0) * 1.2 || 1;
-  const pct = (value: number) => `${Math.min(100, (value / top) * 100)}%`;
+  const bars: { name: string; value: number | null; kind: string }[] = flow?.at != null
+    ? [
+        { name: "This profile", value: flow.at, kind: flow.ok === false ? "off" : "this" },
+        { name: "Manufacturer's limit", value: flow.limit, kind: "other" },
+        { name: `${builtOn} on your printer`, value: flow.base, kind: "other" },
+      ]
+    : [];
+  const top = Math.max(1, ...bars.map((bar) => bar.value ?? 0));
 
   return (
     <>
@@ -75,23 +87,94 @@ function Compare({ spec, builtOn }: { spec: Spec[]; builtOn: string }) {
               <td className="mono">{row.spec ?? <span className="muted">Not listed</span>}</td>
               <td className="mono">{row.value ?? "–"}</td>
               <td>
-                {row.ok === true && <CheckCircle size={18} weight="fill" className="spec-ok" aria-label="Within the manufacturer's figures" />}
-                {row.ok === false && <Warning size={18} weight="fill" className="spec-off" aria-label="Outside the manufacturer's figures" />}
+                {row.ok === true && (
+                  <span title="Within the manufacturer's figures">
+                    <CheckCircle size={18} weight="fill" className="spec-ok" aria-label="Within the manufacturer's figures" />
+                  </span>
+                )}
+                {row.ok === false && (
+                  <span title="Outside the manufacturer's figures">
+                    <Warning size={18} weight="fill" className="spec-off" aria-label="Outside the manufacturer's figures" />
+                  </span>
+                )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {flow?.at != null && (
+      {bars.length > 0 && (
         <div className="flow">
-          <div className="flow-bar" aria-hidden>
-            <span className={flow.ok === false ? "flow-fill off" : "flow-fill"} style={{ width: pct(flow.at) }} />
-            {flow.limit != null && <span className="flow-limit" style={{ left: pct(flow.limit) }} />}
-          </div>
+          <div className="label">Max flow, in mm³/s</div>
+          <dl className="flow-rows">
+            {bars.map((bar) => (
+              <div key={bar.name} className="flow-row">
+                <dt>{bar.name}</dt>
+                <dd>
+                  <span className="flow-track" aria-hidden>
+                    {bar.value != null && <span className={`flow-fill ${bar.kind}`} style={{ width: `${(100 * bar.value) / top}%` }} />}
+                  </span>
+                  <span className="mono">{bar.value ?? "Not listed"}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
           {note && <div className="muted flow-note">{note}</div>}
         </div>
       )}
     </>
+  );
+}
+
+/** The profile's name, with a pencil to give the filament a name of your own. */
+function ProfileName({ alias, fallback, printer, custom, onName }: { alias: string; fallback: string; printer: string; custom: boolean; onName: (name: string | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(alias);
+  useEffect(() => {
+    setEditing(false);
+    setDraft(alias);
+  }, [alias]);
+
+  if (!editing) {
+    return (
+      <div className="profile-name">
+        <span className="selectable">
+          {alias} @{printer}
+        </span>
+        <button type="button" className="icon-button small" aria-label="Rename this profile" title="Rename" onClick={() => setEditing(true)}>
+          <PencilSimple size={16} aria-hidden />
+        </button>
+      </div>
+    );
+  }
+  const save = () => {
+    const name = draft.trim();
+    onName(name && name !== fallback ? name : null);
+    setEditing(false);
+  };
+  return (
+    <form
+      className="rename"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save();
+      }}
+    >
+      <input aria-label="Filament name" value={draft} maxLength={80} autoFocus onChange={(event) => setDraft(event.target.value)} />
+      <div className="muted small mono">@{printer}</div>
+      <div className="rename-buttons">
+        {custom && (
+          <button type="button" className="secondary" onClick={() => onName(null)}>
+            Use "{fallback}"
+          </button>
+        )}
+        <button type="button" className="secondary" onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+        <button type="submit" className="secondary go">
+          Save
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -108,6 +191,12 @@ export function DetailPanel(props: Props) {
   const missing = printers.filter((p) => !usable(p)).map((p) => p.nozzle);
   const added = variant ? variant.added : detail.added;
   const flow = detail.spec.find((row) => row.key === "flow");
+  const changeCount = withRange(detail.changes).length;
+  const short = (printer: Printer) => printer.nozzle;
+  /** Nozzles of this printer the manufacturer published settings for, and the rest. */
+  const published = printers.filter((p) => detail.tuned?.published.includes(p.name));
+  const unpublished = printers.filter((p) => usable(p) && !published.includes(p));
+  const list = (items: string[]) => (items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}` : (items[0] ?? ""));
 
   const toggleNozzle = (nozzle: string) => {
     const next = activeNozzles.includes(nozzle)
@@ -141,7 +230,8 @@ export function DetailPanel(props: Props) {
 
       <div className="detail-body">
         <div>
-          <div className="detail-name">{detail.name}</div>
+          {/* Without a colour the card above already carries the name. */}
+          {variant && <div className="detail-name">{detail.name}</div>}
           <div className="muted">
             {colours === 0 ? "No colours listed" : colours === 1 ? "1 colour in the catalogue" : `${colours} colours in the catalogue`}
             {detail.discontinued ? " · discontinued" : ""}
@@ -171,7 +261,7 @@ export function DetailPanel(props: Props) {
                 <span>No colour</span>
               </button>
             ) : (
-              <div className="muted small">Choosing a colour is optional. Without one, a single profile covers every colour.</div>
+              <div className="muted small">Optional: skip it for one profile that covers every colour.</div>
             )}
           </div>
         )}
@@ -204,17 +294,32 @@ export function DetailPanel(props: Props) {
           </dd>
         </dl>
 
-        {detail.tuned && !blocked && (
+        {detail.tuned && !blocked && published.length > 0 && (
           <div className="tuned">
             <SealCheck size={20} weight="fill" aria-hidden />
             <div>
-              <div>
-                Uses {detail.tuned.brand}'s own settings for {targets[0]?.name.replace(/^Bambu Lab /, "") ?? "this printer"}.
-              </div>
-              <div className="muted small">
-                {detail.tuned.settings} values from {new URL(detail.tuned.source).hostname}, read {detail.tuned.retrieved}.
-                {missing.length === 0 && printers.length > 1 ? " Other nozzles use them only where published." : ""}
-              </div>
+              <div>{detail.tuned.brand}'s own settings</div>
+              <ul className="muted small">
+                <li>
+                  {list(published.map(short))} mm: published at {new URL(detail.tuned.source).hostname}, read {detail.tuned.retrieved}.
+                </li>
+                {unpublished.length > 0 && (
+                  <li>
+                    {list(unpublished.map(short))} mm:{" "}
+                    {props.borrowTuned
+                      ? `none published, so the ${short(published.find((p) => p.nozzle === "0.4") ?? published[0])} mm ones are used, except the flow limit.`
+                      : `none published, so ${unpublished.length > 1 ? "these use" : "this uses"} ${builtOn}'s.`}
+                  </li>
+                )}
+              </ul>
+              {unpublished.length > 0 && (
+                <button type="button" className="mini-switch switch" role="switch" aria-checked={props.borrowTuned} onClick={() => props.onBorrowTuned(!props.borrowTuned)}>
+                  <span className="switch-track" aria-hidden>
+                    <span className="switch-thumb" />
+                  </span>
+                  <span>Use them for the other nozzles too</span>
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -249,6 +354,7 @@ export function DetailPanel(props: Props) {
                   onClick={() => toggleNozzle(printer.nozzle)}
                 >
                   {printer.nozzle}
+                  {published.includes(printer) && <SealCheck size={14} weight="fill" aria-label="Manufacturer's settings" />}
                 </button>
               ))}
             </div>
@@ -263,13 +369,12 @@ export function DetailPanel(props: Props) {
         {props.advanced && !blocked && (
           <div className="advanced">
             <div className="field">
-              <div className="label">Against the manufacturer's figures</div>
               <Compare spec={detail.spec} builtOn={builtOn} />
             </div>
 
             <div className="field">
               <div className="label">
-                {detail.changes.length === 1 ? "1 change" : `${detail.changes.length} changes`} over {builtOn}
+                {changeCount === 1 ? "1 change" : `${changeCount} changes`} over {builtOn}
               </div>
               <Changes changes={detail.changes} colour={variant?.hex ?? null} />
             </div>
@@ -277,9 +382,13 @@ export function DetailPanel(props: Props) {
             {targets[0] && (
               <div className="field">
                 <div className="label">Profile name</div>
-                <div className="profile-name selectable">
-                  {variant?.alias ?? detail.alias} @{targets[0].name}
-                </div>
+                <ProfileName
+                  alias={variant?.alias ?? detail.alias}
+                  fallback={detail.default_alias}
+                  printer={targets[0].name}
+                  custom={props.name !== null}
+                  onName={props.onName}
+                />
               </div>
             )}
           </div>

@@ -95,8 +95,21 @@ export interface Detail {
   /** What adding it would change over the base preset, for the chosen colour. */
   changes: Change[];
   spec: Spec[];
-  /** Set when the manufacturer published settings for this very printer and nozzle. */
-  tuned?: { brand: string; source: string; retrieved: string; settings: number } | null;
+  /** The name the catalogue gives the colour on screen, before any renaming. */
+  default_alias: string;
+  /** Set when the manufacturer published settings for this filament on this printer model. */
+  tuned?: {
+    brand: string;
+    source: string;
+    retrieved: string;
+    /** How many settings it sets on the printer asked about. */
+    settings: number;
+    /** Printer presets of this model the values were published for. */
+    published: string[];
+    /** Published for the printer asked about, not borrowed from another nozzle. */
+    own: boolean;
+    borrowed_from: string | null;
+  } | null;
   blocked: string | null;
 }
 
@@ -105,6 +118,10 @@ export interface InstallRequest {
   variant: string | null;
   printers: string[];
   base: string | null;
+  /** A filament name to use instead of the catalogue's. */
+  alias: string | null;
+  /** Use the manufacturer's settings for another nozzle where none were published for this one. */
+  borrow_tuned: boolean;
   allow_cloud_sync: boolean;
   dry_run: boolean;
 }
@@ -376,7 +393,14 @@ const mockProfile: Profile = {
 };
 
 /** Browser-only: what the backend would answer for a chosen base and colour, roughly. */
-function mockDetail(detail: Detail, base: string | null, colour: string | null): Detail {
+function mockDetail(detail: Detail, base: string | null, colour: string | null, name: string | null, borrowTuned: boolean): Detail {
+  const picked = detail.variants.find((v) => v.name === colour);
+  const defaultAlias = picked ? picked.alias : detail.alias;
+  // ?tuned pretends the maker published settings for the 0.4 mm nozzle only.
+  const published = detail.base_printers.filter((p) => p.includes("0.4"));
+  const tuned = mockQuery.has("tuned")
+    ? { brand: detail.brand, source: "https://example.com/print-settings", retrieved: "2026-11-25", settings: 26, published, own: true, borrowed_from: borrowTuned ? null : null }
+    : detail.tuned;
   const hex = detail.variants.find((v) => v.name === colour)?.hex;
   const changes = detail.changes.filter((c) => c.layer !== "colour");
   if (hex) changes.unshift({ key: "default_filament_colour", layer: "colour", from: "", to: hex });
@@ -384,10 +408,14 @@ function mockDetail(detail: Detail, base: string | null, colour: string | null):
   const silk = base?.includes("Silk") ?? false;
   return {
     ...detail,
+    tuned,
+    default_alias: defaultAlias,
+    alias: name && !picked ? name : detail.alias,
+    variants: detail.variants.map((v) => (name && v.name === colour ? { ...v, alias: name } : v)),
     changes,
     base_printers: silk ? detail.base_printers.filter((name) => name.includes("0.4")) : detail.base_printers,
     spec: detail.spec.map((row) =>
-      row.key === "flow" && row.limit === null ? { ...row, spec: "up to 16 mm³/s", limit: 16, ok: (row.at ?? 0) <= 16 } : row,
+      row.key === "flow" && row.limit === null ? { ...row, spec: "16 mm³/s", limit: 16, ok: (row.at ?? 0) <= 16 } : row,
     ),
   };
 }
@@ -400,15 +428,22 @@ export const api = {
   },
   catalogue: (refresh: boolean): Promise<CatalogueData> =>
     inApp ? invoke("catalogue", { refresh }) : mock("catalogue"),
-  detail: (key: string, printer: string | null, base: string | null, colour: string | null): Promise<Detail> =>
+  detail: (
+    key: string,
+    printer: string | null,
+    base: string | null,
+    colour: string | null,
+    name: string | null,
+    borrowTuned: boolean,
+  ): Promise<Detail> =>
     inApp
-      ? invoke("detail", { key, printer, base, colour })
+      ? invoke("detail", { key, printer, base, colour, name, borrowTuned })
       : mock<Detail>(`detail-${key.split("/").join("~")}`)
           .catch(() =>
             // No dump for this filament: show the sample one under the key that was asked for.
             mock<Detail>("detail-polymaker~PLA~polylite_pla").then((detail) => ({ ...detail, key })),
           )
-          .then((detail) => mockDetail(detail, base, colour)),
+          .then((detail) => mockDetail(detail, base, colour, name, borrowTuned)),
   install: (request: InstallRequest): Promise<InstallResult> =>
     inApp ? invoke("install", { request }) : mockWrite(request.allow_cloud_sync, "install-dry"),
   exportBundle: (request: InstallRequest): Promise<string[]> =>

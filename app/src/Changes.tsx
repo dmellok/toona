@@ -10,6 +10,7 @@ const LABELS: Record<string, string> = {
   filament_max_volumetric_speed: "Max speed",
   nozzle_temperature: "Nozzle",
   nozzle_temperature_initial_layer: "Nozzle, first layer",
+  nozzle_temperature_range: "Nozzle range",
   nozzle_temperature_range_low: "Nozzle range, low",
   nozzle_temperature_range_high: "Nozzle range, high",
   cool_plate_temp: "Cool plate",
@@ -48,7 +49,18 @@ interface Props {
 }
 
 /** What a profile changes over the preset it is built on, one row per setting. */
-export function Changes({ changes, colour }: Props) {
+/** The low and high end of the nozzle range read as one setting, so they are one row. */
+export function withRange(changes: Change[]): Change[] {
+  const low = changes.find((c) => c.key === "nozzle_temperature_range_low");
+  const high = changes.find((c) => c.key === "nozzle_temperature_range_high");
+  if (!low || !high) return changes;
+  const span = (a: string | null, b: string | null) => (a && b ? `${a}–${b}` : null);
+  const range: Change = { key: "nozzle_temperature_range", layer: low.layer, from: span(low.from, high.from), to: `${low.to}–${high.to}` };
+  return changes.flatMap((c) => (c === low ? [range] : c === high ? [] : [c]));
+}
+
+export function Changes({ changes: all, colour }: Props) {
+  const changes = withRange(all);
   if (changes.length === 0) return <div className="muted">Nothing. It is the base preset under a new name.</div>;
   return (
     <ul className="changes">

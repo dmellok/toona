@@ -158,8 +158,14 @@ pub struct TunedDto {
     /// The page the values were read from.
     pub source: String,
     pub retrieved: String,
-    /// How many settings it sets.
+    /// How many settings it sets on the printer asked about.
     pub settings: usize,
+    /// Printer presets of this model the values were published for.
+    pub published: Vec<String>,
+    /// The values were published for the printer asked about, not borrowed from another nozzle.
+    pub own: bool,
+    /// The values in use on the printer asked about come from this other preset.
+    pub borrowed_from: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -176,6 +182,8 @@ pub struct DetailDto {
     pub variants: Vec<VariantDto>,
     /// The filament name the slicer shows when it is added without a colour.
     pub alias: String,
+    /// The name the catalogue gives the colour on screen, before any renaming.
+    pub default_alias: String,
     /// Already in the slicer without a colour, put there by Toona.
     pub added: bool,
     /// The preset a profile for `printer` would be built on.
@@ -202,6 +210,12 @@ pub struct InstallRequest {
     pub variant: Option<String>,
     pub printers: Vec<String>,
     pub base: Option<String>,
+    /// A filament name to use instead of the catalogue's.
+    #[serde(default)]
+    pub alias: Option<String>,
+    /// Use the manufacturer's settings for another nozzle where it published none for this one.
+    #[serde(default)]
+    pub borrow_tuned: bool,
     #[serde(default)]
     pub allow_cloud_sync: bool,
     #[serde(default)]
@@ -419,6 +433,8 @@ impl Backend {
         printer: Option<&str>,
         base_override: Option<&str>,
         colour: Option<&str>,
+        name: Option<&str>,
+        borrow_tuned: bool,
     ) -> UiResult<DetailDto> {
         let catalogue = self.load_catalogue(Refresh::IfMissing)?;
         let filament = find_by_key(&catalogue, key)?;
@@ -459,6 +475,8 @@ impl Backend {
                         base: base_override,
                         user_id: studio.conf.user_id(),
                         existing: &[],
+                        alias: name,
+                        borrow_tuned,
                     };
                     match build_profile_with_recipe(&studio.library, &request) {
                         Ok((profile, recipe)) => {
@@ -467,7 +485,7 @@ impl Backend {
                                 .library
                                 .resolve_filament(&choice.preset)
                                 .ok()
-                                .and_then(|base| highest(base.settings.get(FLOW_KEY)?));
+                                .and_then(|base| first(base.settings.get(FLOW_KEY)?));
                             built = Some((profile, base_flow));
                         }
                         Err(error) => blocked = Some(sentence(&error.to_string())),
@@ -481,23 +499,36 @@ impl Backend {
                 Err(error) => blocked = Some(sentence(&error.to_string())),
             }
         }
-        let tuned = printer.filter(|_| built.is_some()).and_then(|printer| toona_core::tuned::tuned_for(&filament.key, printer));
-        let tuned_flow = tuned.and_then(|(_, entry)| entry.settings.get(FLOW_KEY)?.parse::<f64>().ok());
-        let mut spec = spec_rows(filament, built.as_ref().map(|(profile, flow)| (profile, *flow)), tuned_flow);
-        if tuned.is_some() {
+        let published: Vec<String> = printer
+            .filter(|_| built.is_some())
+            .map(|printer| toona_core::tuned::published_for(&filament.key, printer).into_iter().map(str::to_string).collect())
+            .unwrap_or_default();
+        let own = printer.filter(|_| built.is_some()).and_then(|printer| toona_core::tuned::tuned_for(&filament.key, printer));
+        let borrowed = printer
+            .filter(|_| built.is_some() && borrow_tuned)
+            .and_then(|printer| toona_core::tuned::borrowed_for(&filament.key, printer));
+        let mut spec = spec_rows(filament, built.as_ref().map(|(profile, flow)| (profile, *flow)), own.map(|(_, entry)| entry));
+        if own.is_some() || borrowed.is_some() {
             // The values are the manufacturer's own for this printer; where they differ
             // from the catalogue's general figures, that is not a fault in the profile.
             for row in spec.iter_mut().filter(|row| row.ok == Some(false)) {
                 row.ok = None;
             }
         }
-        let tuned = tuned.map(|(set, entry)| TunedDto {
+        // Any set that covers this product on this model, to say where the values come from.
+        let source = own.or(borrowed).or_else(|| published.first().and_then(|name| toona_core::tuned::tuned_for(&filament.key, name)));
+        let tuned = source.map(|(set, entry)| TunedDto {
             brand: set.brand.clone(),
             source: set.source.clone(),
             retrieved: set.retrieved.clone(),
-            settings: entry.settings.len(),
+            settings: if own.is_some() || borrowed.is_some() { entry.settings.len() } else { 0 },
+            published,
+            own: own.is_some(),
+            borrowed_from: borrowed.map(|(_, entry)| entry.printer.clone()),
         });
-        let plain = profile_alias(filament, None);
+        // A name the person chose replaces the catalogue's for the colour on screen.
+        let custom = name.map(toona_core::profile::sanitize_alias).filter(|alias| !alias.is_empty());
+        let plain = custom.clone().filter(|_| variant.is_none()).unwrap_or_else(|| profile_alias(filament, None));
 
         let range = |low: Option<f64>, high: Option<f64>| low.zip(high).map(|(low, high)| [low, high]);
         Ok(DetailDto {
@@ -514,7 +545,8 @@ impl Backend {
                 .variants
                 .iter()
                 .map(|variant| {
-                    let alias = profile_alias(filament, Some(variant));
+                    let chosen = colour == Some(variant.name.as_str());
+                    let alias = custom.clone().filter(|_| chosen).unwrap_or_else(|| profile_alias(filament, Some(variant)));
                     VariantDto {
                         name: variant.name.clone(),
                         hex: clean_hex(variant.color_hex.as_deref()),
@@ -524,6 +556,7 @@ impl Backend {
                 })
                 .collect(),
             added: added_aliases.contains(&plain.as_str()),
+            default_alias: profile_alias(filament, variant),
             alias: plain,
             base,
             bases,
@@ -567,6 +600,8 @@ impl Backend {
                     base: request.base.as_deref(),
                     user_id: studio.conf.user_id(),
                     existing: &existing,
+                    alias: request.alias.as_deref(),
+                    borrow_tuned: request.borrow_tuned,
                 },
             )?;
             let base = choose_base(&studio.library, filament, printer, request.base.as_deref())?;
@@ -578,7 +613,8 @@ impl Backend {
             });
             planned.push(PlannedProfile { catalogue_key: filament.key.clone(), profile, recipe: Some(recipe) });
         }
-        Ok((profile_alias(filament, variant), planned, described))
+        let alias = planned.first().map(|p: &PlannedProfile| p.profile.alias().to_string()).unwrap_or_else(|| profile_alias(filament, variant));
+        Ok((alias, planned, described))
     }
 
     /// Writes a filament's profiles into the slicer, or with `dry_run` reports what it would write.
@@ -899,6 +935,9 @@ impl Backend {
             variant: request.variant.clone(),
             printers,
             base: Some(version.parent_preset.clone()),
+            alias: request.alias.clone(),
+            // A shared profile brings its own values; the manufacturer's are not laid over them.
+            borrow_tuned: false,
             allow_cloud_sync: request.allow_cloud_sync,
             dry_run: request.dry_run,
         };
@@ -1275,6 +1314,15 @@ fn highest(value: &serde_json::Value) -> Option<f64> {
     }
 }
 
+/// The first number of a setting: the standard nozzle's.
+fn first(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::String(text) => text.parse().ok(),
+        serde_json::Value::Array(items) => items.first()?.as_str()?.parse().ok(),
+        _ => None,
+    }
+}
+
 /// An error message as a sentence of its own: capitalised, with a full stop.
 fn sentence(text: &str) -> String {
     let mut chars = text.trim().chars();
@@ -1290,8 +1338,10 @@ fn sentence(text: &str) -> String {
 fn spec_rows(
     filament: &CatalogueFilament,
     built: Option<(&FilamentProfile, Option<f64>)>,
-    tuned_flow: Option<f64>,
+    tuned: Option<&toona_core::tuned::TunedEntry>,
 ) -> Vec<SpecDto> {
+    // What the manufacturer published for this very printer says more than the catalogue's general figure.
+    let published = |key: &str| tuned.and_then(|entry| entry.settings.get(key)?.parse::<f64>().ok());
     let setting = |key: &str| built.and_then(|(profile, _)| highest(profile.settings.get(key)?));
     let within = |value: Option<f64>, low: Option<f64>, high: Option<f64>| Some(value? >= low? && value? <= high?);
     let span = |low: Option<f64>, high: Option<f64>| Some(format!("{}–{} °C", low?, high?));
@@ -1300,17 +1350,20 @@ fn spec_rows(
     let nozzle = setting("nozzle_temperature");
     // A plate the preset does not allow reads 0; the smooth plate is the usual one.
     let bed = setting("hot_plate_temp").filter(|t| *t > 0.0).or(setting("textured_plate_temp"));
-    let flow = setting(FLOW_KEY);
+    // The first value is the standard nozzle's; a printer with a second kind of nozzle lists more.
+    let flow = built.and_then(|(profile, _)| first(profile.settings.get(FLOW_KEY)?));
     let density = setting("filament_density");
     // The flow the manufacturer tuned for this printer is its figure when the catalogue has none.
-    let limit = filament.max_volumetric_speed.filter(|v| *v > 0.0).or(tuned_flow);
-    let listed_density = filament.density.filter(|d| *d > 0.0);
+    let limit = published(FLOW_KEY).or(filament.max_volumetric_speed.filter(|v| *v > 0.0));
+    let listed_density = published("filament_density").or(filament.density.filter(|d| *d > 0.0));
+    let low = published("nozzle_temperature_range_low").or(filament.min_print_temperature);
+    let high = published("nozzle_temperature_range_high").or(filament.max_print_temperature);
     vec![
         SpecDto {
             key: "nozzle",
-            spec: span(filament.min_print_temperature, filament.max_print_temperature),
+            spec: span(low, high),
             value: degrees(nozzle),
-            ok: within(nozzle, filament.min_print_temperature, filament.max_print_temperature),
+            ok: within(nozzle, low, high),
             limit: None,
             at: None,
             base: None,
@@ -1326,7 +1379,7 @@ fn spec_rows(
         },
         SpecDto {
             key: "flow",
-            spec: limit.map(|v| format!("up to {v} mm³/s")),
+            spec: limit.map(|v| format!("{v} mm³/s")),
             value: flow.map(|v| format!("{v} mm³/s")),
             ok: flow.zip(limit).map(|(flow, limit)| flow <= limit),
             limit,

@@ -81,6 +81,10 @@ export default function App() {
   /** The base chosen for a filament, kept between sessions. */
   const [baseOverride, setBaseOverride] = useState<Record<string, string>>(() => recall("toona.bases", {}));
   const [recentBases, setRecentBases] = useState<string[]>(() => recall("toona.recentBases", []));
+  /** Names the person gave profiles, by filament and colour, kept between sessions. */
+  const [names, setNames] = useState<Record<string, string>>(() => recall("toona.names", {}));
+  /** Use a manufacturer's settings for one nozzle on the others it published nothing for. */
+  const [borrowTuned, setBorrowTuned] = useState(() => stored("toona.borrowTuned"));
   const [model, setModel] = useState<string | null>(null);
   /** The nozzles ticked for each printer model, kept between sessions. */
   const [nozzles, setNozzles] = useState<Record<string, string[]>>(() => recall("toona.nozzles", {}));
@@ -209,6 +213,8 @@ export default function App() {
 
   const chosenBase = selectedKey ? (baseOverride[selectedKey] ?? null) : null;
   const chosenColour = selectedKey ? (colour[selectedKey] ?? null) : null;
+  const nameKey = `${selectedKey ?? ""}|${chosenColour ?? ""}`;
+  const chosenName = names[nameKey] ?? null;
 
   // The panel keeps showing the previous filament until the next one has loaded, so
   // switching never blanks it. Only the most recent request may fill it.
@@ -217,10 +223,10 @@ export default function App() {
     if (!selectedKey) return;
     const request = ++detailRequest.current;
     api
-      .detail(selectedKey, primaryPrinter, chosenBase, chosenColour)
+      .detail(selectedKey, primaryPrinter, chosenBase, chosenColour, chosenName, borrowTuned)
       .then((next) => request === detailRequest.current && setDetail(next))
       .catch(() => request === detailRequest.current && setDetail(null));
-  }, [selectedKey, primaryPrinter, chosenBase, chosenColour]);
+  }, [selectedKey, primaryPrinter, chosenBase, chosenColour, chosenName, borrowTuned]);
 
   useEffect(loadDetail, [loadDetail]);
 
@@ -298,6 +304,8 @@ export default function App() {
           variant: variant?.name ?? null,
           printers: targets.map((p) => p.name),
           base: baseOverride[detail.key] ?? null,
+          alias: chosenName,
+          borrow_tuned: borrowTuned,
           allow_cloud_sync: allowSync,
           dry_run: false,
         }
@@ -524,7 +532,7 @@ export default function App() {
         {status?.found && status.running && (
           <div className="notice">
             <Warning size={18} aria-hidden />
-            <span>{studioName} is open</span>
+            <span>Close {studioName} to make changes</span>
           </div>
         )}
 
@@ -637,6 +645,19 @@ export default function App() {
                 remember("toona.nozzles", all);
               }}
               recentBases={recentBases}
+              name={chosenName}
+              onName={(next) => {
+                const all = { ...names };
+                if (next) all[nameKey] = next;
+                else delete all[nameKey];
+                setNames(all);
+                remember("toona.names", all);
+              }}
+              borrowTuned={borrowTuned}
+              onBorrowTuned={(on) => {
+                store("toona.borrowTuned", on);
+                setBorrowTuned(on);
+              }}
               base={baseOverride[detail.key] ?? null}
               onBase={(preset) => {
                 const next = { ...baseOverride };

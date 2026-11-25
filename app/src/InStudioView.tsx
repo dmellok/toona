@@ -1,7 +1,7 @@
 import { CaretDown, CheckCircle, LinkSimple, Printer as PrinterIcon, ShareNetwork, Stack, Trash, Warning, Wrench } from "@phosphor-icons/react";
 import type { Added, InStudio, Own } from "./api";
 import { useState } from "react";
-import { Changes } from "./Changes";
+import { Changes, withRange } from "./Changes";
 import { dotStyle } from "./colour";
 
 interface Props {
@@ -61,6 +61,10 @@ export function InStudioView({ data, studioName, busy, onBrowse, onRemove, onFix
         </div>
       )}
 
+      <div className="studio-columns">
+      {added.length > 0 && (
+      <section className="studio-section">
+      <h2>Added with Toona</h2>
       {byPrinter(added).map(([printer, rows]) => (
       <div key={printer} className="printer-group">
       {grouped && <PrinterHead name={printer} count={rows.length} />}
@@ -83,7 +87,7 @@ export function InStudioView({ data, studioName, busy, onBrowse, onRemove, onFix
                 aria-expanded={open === row.profile_name}
                 onClick={() => setOpen(open === row.profile_name ? null : row.profile_name)}
               >
-                <span>{row.changes.length === 1 ? "1 change" : `${row.changes.length} changes`}</span>
+                <span>{withRange(row.changes).length === 1 ? "1 change" : `${withRange(row.changes).length} changes`}</span>
                 <CaretDown size={14} aria-hidden />
               </button>
             )}
@@ -114,9 +118,11 @@ export function InStudioView({ data, studioName, busy, onBrowse, onRemove, onFix
       </div>
       </div>
       ))}
+      </section>
+      )}
 
       {own.length > 0 && (
-        <>
+        <section className="studio-section">
           <h2>Made in {studioName}</h2>
           <div className="section-head">
             <p>
@@ -160,11 +166,11 @@ export function InStudioView({ data, studioName, busy, onBrowse, onRemove, onFix
           </div>
           </div>
           ))}
-        </>
+        </section>
       )}
 
       {imported.length > 0 && (
-        <>
+        <section className="studio-section">
           <h2>Imported profiles</h2>
           <div className="section-head">
             <p>
@@ -205,8 +211,9 @@ export function InStudioView({ data, studioName, busy, onBrowse, onRemove, onFix
               </div>
             ))}
           </div>
-        </>
+        </section>
       )}
+      </div>
     </div>
   );
 }

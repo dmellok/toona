@@ -26,7 +26,7 @@ fn main() {
     write("catalogue", result(backend.catalogue(false).map(|c| json(&c))));
     write("in_studio", result(backend.in_studio().map(|c| json(&c))));
     for key in std::env::args().skip(2) {
-        let detail = backend.detail(&key, printer.as_deref(), None, None);
+        let detail = backend.detail(&key, printer.as_deref(), None, None, None, false);
         write(&format!("detail-{}", key.replace('/', "~")), result(detail.map(|d| json(&d))));
     }
     if let Some(printer) = printer {
@@ -35,6 +35,8 @@ fn main() {
             variant: Some("Cold White".into()),
             printers: vec![printer],
             base: None,
+            alias: None,
+            borrow_tuned: false,
             allow_cloud_sync: false,
             dry_run: true,
         };

@@ -150,6 +150,8 @@ fn request<'a>(catalogue: &'a Catalogue, key: &str) -> ProfileRequest<'a> {
         base: None,
         user_id: Some(USER_ID),
         existing: &[],
+        alias: None,
+        borrow_tuned: false,
     }
 }
 

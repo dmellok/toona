@@ -37,6 +37,11 @@ pub struct ProfileRequest<'a> {
     pub user_id: Option<&'a str>,
     /// User filament profiles already in the slicer, for id reuse and collision checks.
     pub existing: &'a [UserFilament],
+    /// A filament name to use instead of `<brand> <name>[ <colour>]`.
+    pub alias: Option<&'a str>,
+    /// Where the manufacturer published settings for another nozzle of this printer
+    /// but not this one, use those (all but the ones that depend on nozzle size).
+    pub borrow_tuned: bool,
 }
 
 /// Display name of the profile's filament: `<brand> <name>[ <colour>]`.
@@ -224,6 +229,10 @@ pub fn build_profile_with_recipe(
     // than the catalogue's ranges, so they go on last.
     if let Some((_, entry)) = crate::tuned::tuned_for(&filament.key, request.printer) {
         crate::tuned::apply(&mut settings, entry);
+    } else if request.borrow_tuned {
+        if let Some((_, entry)) = crate::tuned::borrowed_for(&filament.key, request.printer) {
+            crate::tuned::apply_borrowed(&mut settings, entry);
+        }
     }
 
     let mut recipe = Recipe::between(&base_name, &base_settings, &settings, catalogue_layer);
@@ -239,7 +248,11 @@ pub fn build_profile_with_recipe(
         recipe.changes.sort_by(|a, b| a.key.cmp(&b.key));
     }
 
-    let alias = profile_alias(filament, request.variant);
+    let alias = request
+        .alias
+        .map(crate::profile::sanitize_alias)
+        .filter(|alias| !alias.is_empty())
+        .unwrap_or_else(|| profile_alias(filament, request.variant));
     let name = format!("{alias} @{}", request.printer);
     let profile = FilamentProfile {
         filament_id: filament_id_for(&alias, request.user_id, request.existing),

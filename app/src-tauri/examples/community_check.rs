@@ -57,6 +57,8 @@ fn main() {
                 variant: None,
                 printers: vec![],
                 base: None,
+                alias: None,
+                borrow_tuned: false,
                 allow_cloud_sync: false,
                 dry_run: true,
             },

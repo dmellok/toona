@@ -363,6 +363,8 @@ fn install_command(context: &Context_, catalogue: &Catalogue, args: &InstallArgs
                 base: args.base.as_deref(),
                 user_id: conf.user_id(),
                 existing: &existing,
+                alias: None,
+                borrow_tuned: false,
             },
         )
         .with_context(|| format!("for printer {}", printer.name))?;

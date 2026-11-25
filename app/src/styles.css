@@ -404,8 +404,8 @@ select.chip.on {
 /* Detail panel */
 
 .detail {
-  flex: 1 1 360px;
-  max-width: 440px;
+  flex: 1 1 400px;
+  max-width: 500px;
   min-width: 0;
   background: var(--card);
   border-radius: 20px;
@@ -671,8 +671,19 @@ select.chip.on {
 
 /* In Studio */
 
-.in-studio {
-  max-width: 880px;
+/* Sections flow into as many columns as the window has room for. */
+.studio-columns {
+  columns: 520px;
+  column-gap: 32px;
+}
+
+.studio-section {
+  break-inside: avoid;
+  padding-bottom: 28px;
+}
+
+.in-studio .studio-section h2 {
+  margin-top: 0;
 }
 
 .in-studio h1 {
@@ -2291,38 +2302,66 @@ select.chip.on {
   color: var(--warn);
 }
 
+/* Max flow as three labelled bars on one scale, set apart from the table above. */
 .flow {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 
-.flow-bar {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
+.flow-rows {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+
+.flow-row dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flow-row dd .mono {
+  flex: 0 0 auto;
+  min-width: 34px;
+  text-align: right;
+}
+
+.flow-track {
+  flex: 1 1 auto;
+  height: 12px;
+  border-radius: 3px;
   background: var(--hairline);
+  overflow: hidden;
 }
 
 .flow-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 4px;
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.flow-fill.this {
   background: var(--ink);
 }
 
-.flow-fill.off {
-  background: var(--warn);
+.flow-fill.other {
+  background: #8b9096;
 }
 
-/* Where the manufacturer's limit sits on the bar. */
-.flow-limit {
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  width: 2px;
-  margin-left: -1px;
+.flow-fill.off {
   background: var(--warn);
 }
 
@@ -2549,4 +2588,102 @@ select.chip.on {
 
 .pill.icon-only {
   padding: 0 12px;
+}
+
+/* The search box shows focus on its own border; an outline was cut off by the scrolling list. */
+.search input:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+/* The manufacturer's settings, nozzle by nozzle. */
+.tuned ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mini-switch {
+  margin-top: 6px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.tuned .mini-switch .switch-track {
+  margin: 0;
+}
+
+.nozzle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.tuned .switch-thumb,
+.nozzle svg {
+  color: inherit;
+}
+
+.nozzle svg {
+  margin: 0;
+}
+
+/* Renaming a profile. */
+.profile-name {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.icon-button.small {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -10px -8px -10px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.rename {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rename input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  font: inherit;
+  color: var(--ink);
+}
+
+.rename-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.secondary.go {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }

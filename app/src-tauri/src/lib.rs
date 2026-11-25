@@ -44,8 +44,10 @@ async fn detail(
     printer: Option<String>,
     base: Option<String>,
     colour: Option<String>,
+    name: Option<String>,
+    borrow_tuned: bool,
 ) -> UiResult<api::DetailDto> {
-    blocking(&backend, move |b| b.detail(&key, printer.as_deref(), base.as_deref(), colour.as_deref())).await
+    blocking(&backend, move |b| b.detail(&key, printer.as_deref(), base.as_deref(), colour.as_deref(), name.as_deref(), borrow_tuned)).await
 }
 
 #[tauri::command]
