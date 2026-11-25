@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CaretDown, GithubLogo, Printer as PrinterIcon, Warning } from "@phosphor-icons/react";
+import { ArrowCircleUp, CaretDown, GearSix, GithubLogo, Printer as PrinterIcon, Warning } from "@phosphor-icons/react";
 import {
   api,
   asUiError,
@@ -10,6 +10,8 @@ import {
   type Detail,
   type Edit,
   type Own,
+  type Prefs,
+  type Update,
   type Profile,
   type InStudio,
   type InstallRequest,
@@ -94,6 +96,71 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   /** The user ticked "Don't ask again" on the cloud-sync question. */
   const [syncOk, setSyncOk] = useState(() => stored("toona.syncOk"));
+
+  const [prefs, setPrefs] = useState<Prefs | null>(null);
+  /** A newer version of Toona that is waiting to be installed. */
+  const [update, setUpdate] = useState<Update | null>(null);
+
+  /** What Toona does by itself when it opens, each only if the person allowed it. */
+  const background = useCallback(() => {
+    api.sendUsage().catch(() => undefined);
+    api.checkUpdate(true).then(setUpdate).catch(() => undefined);
+  }, []);
+
+  const offerUpdate = (found: Update) =>
+    setSheet({
+      kind: "update",
+      update: found,
+      install: () => {
+        setSheet({ kind: "updating", version: found.version });
+        // Only comes back if it failed: a finished install restarts the app.
+        api.installUpdate().catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+      },
+    });
+
+  const openPrefs = (current: Prefs, first: boolean) =>
+    setSheet({
+      kind: "prefs",
+      first,
+      prefs: current,
+      save: (updates, usage) => {
+        api
+          .setPrefs(updates, usage)
+          .then((next) => {
+            setPrefs(next);
+            setSheet(null);
+            if (!updates) setUpdate(null);
+            background();
+          })
+          .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+      },
+      check: first
+        ? null
+        : () => {
+            api
+              .checkUpdate(false)
+              .then((found) => {
+                setUpdate(found);
+                if (found) offerUpdate(found);
+                else setSheet({ kind: "current", version: current.version });
+              })
+              .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+          },
+    });
+
+  // Nothing is checked or sent until the first-run question has an answer.
+  useEffect(() => {
+    api
+      .prefs()
+      .then((current) => {
+        setPrefs(current);
+        if (current.asked) background();
+        else openPrefs(current, true);
+      })
+      .catch(() => undefined);
+    // Runs once, when the window opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refreshStatus = useCallback(() => {
     api.status().then(setStatus).catch(() => undefined);
@@ -461,6 +528,13 @@ export default function App() {
           </div>
         )}
 
+        {update && (
+          <button type="button" className="pill update" onClick={() => offerUpdate(update)}>
+            <ArrowCircleUp size={18} aria-hidden />
+            <span>Update to {update.version}</span>
+          </button>
+        )}
+
         {activeModel && (
           <div className="pill pill-select">
             <PrinterIcon size={18} aria-hidden />
@@ -495,6 +569,12 @@ export default function App() {
           >
             <GithubLogo size={18} aria-hidden />
             <span>{user ? `@${user.handle}` : "Sign in"}</span>
+          </button>
+        )}
+
+        {prefs && (
+          <button type="button" className="pill icon-only" aria-label="Settings" title="Settings" onClick={() => openPrefs(prefs, false)}>
+            <GearSix size={18} aria-hidden />
           </button>
         )}
 

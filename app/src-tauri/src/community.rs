@@ -227,6 +227,27 @@ impl Community {
         Ok((status, value))
     }
 
+    /// The server this app talks to.
+    pub fn api(&self) -> &str {
+        &self.api
+    }
+
+    /// The opt-in usage hello. Sent without the sign-in, so it is not tied to an account.
+    pub fn hello(&self, report: Value) -> UiResult<()> {
+        let response = self
+            .client
+            .post(format!("{}/app/ping", self.api))
+            .header("content-type", "application/json")
+            .body(report.to_string())
+            .send()
+            .map_err(|_| offline("Could not reach the Toona server."))?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(UiError { kind: "other", message: "The Toona server refused the usage numbers.".into() })
+        }
+    }
+
     /// A call that must succeed; the server's own message is passed on when it refuses.
     fn expect(&self, method: &str, path: &str, body: Option<Value>) -> UiResult<Value> {
         let (status, value) = self.call(method, path, body, None)?;

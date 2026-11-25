@@ -332,6 +332,19 @@ impl Backend {
         Ok(catalogue)
     }
 
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
+        &self.dirs.data_dir
+    }
+
+    pub(crate) fn server(&self) -> &Community {
+        &self.community
+    }
+
+    /// How many profiles Toona has put in the slicer.
+    pub(crate) fn added_count(&self) -> usize {
+        self.manifest().profiles.len()
+    }
+
     fn manifest(&self) -> Manifest {
         Manifest::load(&self.dirs).unwrap_or_default()
     }

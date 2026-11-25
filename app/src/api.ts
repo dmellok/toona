@@ -3,6 +3,7 @@
 // `cargo run -p toona-app --example dump` wrote into public/mock.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface Printer {
   name: string;
@@ -272,6 +273,44 @@ export function asUiError(error: unknown): UiError {
 
 const inApp = "__TAURI_INTERNALS__" in window;
 
+/** What the person chose about update checks and usage numbers. */
+export interface Prefs {
+  /** The first-run question was answered. */
+  asked: boolean;
+  updates: boolean;
+  usage: boolean;
+  version: string;
+  /** Exactly what a usage hello sent now would contain. */
+  report: Record<string, unknown>;
+}
+
+export interface Update {
+  version: string;
+  notes: string;
+}
+
+// In a plain browser: add ?firstrun to see the first-run question, ?update for a waiting update.
+const mockQuery = new URLSearchParams(location.search);
+const mockPrefs: Prefs = {
+  asked: !mockQuery.has("firstrun"),
+  updates: true,
+  usage: false,
+  version: "0.3.0",
+  report: {
+    version: "0.3.0",
+    os: "macos",
+    os_version: "15.1",
+    arch: "aarch64",
+    slicer: "Bambu Studio",
+    printers: ["Bambu Lab X2D"],
+    added: 4,
+    first: true,
+    new_week: true,
+    new_month: true,
+  },
+};
+const mockUpdate: Update = { version: "0.3.1", notes: "Faster start.\nFixes a nozzle mix-up on the A1 mini." };
+
 async function mock<T>(file: string): Promise<T> {
   const response = await fetch(`/mock/${file}.json`);
   if (!response.ok) throw { kind: "other", message: `No mock data for ${file}` } satisfies UiError;
@@ -415,6 +454,24 @@ export const api = {
       : mockWrite(allowCloudSync, "install-dry"),
   barcode: (code: string): Promise<BarcodeMatch[]> =>
     inApp ? invoke("barcode", { code }) : Promise.resolve([]),
+  prefs: (): Promise<Prefs> => (inApp ? invoke("prefs") : Promise.resolve({ ...mockPrefs })),
+  setPrefs: (updates: boolean, usage: boolean): Promise<Prefs> =>
+    inApp ? invoke("set_prefs", { updates, usage }) : Promise.resolve({ ...Object.assign(mockPrefs, { asked: true, updates, usage }) }),
+  /** Sends the usage hello if the person opted in and none went today. */
+  sendUsage: (): Promise<boolean> => (inApp ? invoke("send_usage") : Promise.resolve(mockPrefs.usage)),
+  /** `automatic` is the check on opening, which the backend skips unless the person allowed it. */
+  checkUpdate: (automatic: boolean): Promise<Update | null> =>
+    inApp
+      ? invoke("check_update", { automatic })
+      : Promise.resolve(mockQuery.has("update") && (!automatic || mockPrefs.updates) ? mockUpdate : null),
+  /** Resolves only on failure: after a successful install the app restarts. */
+  installUpdate: (): Promise<void> =>
+    inApp ? invoke("install_update") : new Promise((_, reject) => setTimeout(() => reject({ kind: "other", message: "Updates only install in the real app." }), 1500)),
+  onUpdateProgress: (heard: (done: number, total: number | null) => void): (() => void) => {
+    if (!inApp) return () => undefined;
+    const stop = listen<[number, number | null]>("update-progress", (event) => heard(event.payload[0], event.payload[1]));
+    return () => void stop.then((off) => off());
+  },
   account: (): Promise<Account> =>
     inApp ? invoke("account") : Promise.resolve({ available: true, user: mockSignedIn ? mockUser : null }),
   signInStart: (): Promise<SignIn> =>

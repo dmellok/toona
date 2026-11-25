@@ -2,11 +2,14 @@
 
 pub mod api;
 pub mod community;
+pub mod prefs;
 
 use std::sync::Arc;
 
 use api::{Backend, UiError};
-use tauri::State;
+use serde::Serialize;
+use tauri::{Emitter, State};
+use tauri_plugin_updater::UpdaterExt;
 
 type UiResult<T> = Result<T, UiError>;
 type Shared<'a> = State<'a, Arc<Backend>>;
@@ -169,11 +172,88 @@ async fn family(backend: Shared<'_>, version_id: u64) -> UiResult<Vec<api::Share
     blocking(&backend, move |b| b.family(version_id)).await
 }
 
+#[tauri::command]
+async fn prefs(backend: Shared<'_>) -> UiResult<prefs::PrefsDto> {
+    blocking(&backend, |b| Ok(b.prefs())).await
+}
+
+#[tauri::command]
+async fn set_prefs(backend: Shared<'_>, updates: bool, usage: bool) -> UiResult<prefs::PrefsDto> {
+    blocking(&backend, move |b| b.set_prefs(updates, usage)).await
+}
+
+/// Sends the usage hello if the person opted in and none was sent today.
+#[tauri::command]
+async fn send_usage(backend: Shared<'_>) -> UiResult<bool> {
+    blocking(&backend, |b| b.send_usage()).await
+}
+
+#[derive(Serialize)]
+struct UpdateDto {
+    version: String,
+    notes: String,
+}
+
+fn update_error(error: tauri_plugin_updater::Error) -> UiError {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Reqwest(_) | Error::Network(_) => UiError { kind: "offline", message: "Could not reach the Toona server.".into() },
+        other => UiError { kind: "other", message: format!("The update could not be used: {other}") },
+    }
+}
+
+/// Asks the Toona server whether there is a newer version. The request carries this
+/// version and the kind of computer, nothing else.
+async fn newer(app: &tauri::AppHandle, backend: &Backend) -> UiResult<Option<tauri_plugin_updater::Update>> {
+    let endpoint = format!("{}/app/update/{{{{target}}}}/{{{{arch}}}}/{{{{current_version}}}}", backend.server().api());
+    let endpoint = endpoint.parse().map_err(|_| UiError { kind: "other", message: "The update address is not valid.".into() })?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![endpoint])
+        .and_then(|builder| builder.timeout(std::time::Duration::from_secs(15)).build())
+        .map_err(update_error)?;
+    updater.check().await.map_err(update_error)
+}
+
+/// `automatic` is the check made when the window opens, which only runs if the person allowed it.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle, backend: Shared<'_>, automatic: bool) -> UiResult<Option<UpdateDto>> {
+    if automatic && !blocking(&backend, |b| Ok(b.checks_for_updates())).await? {
+        return Ok(None);
+    }
+    Ok(newer(&app, &backend)
+        .await?
+        .map(|update| UpdateDto { version: update.version.clone(), notes: update.body.clone().unwrap_or_default() }))
+}
+
+/// Downloads the newer version, checks its signature against the key built into this
+/// app, replaces the app and starts it again.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, backend: Shared<'_>) -> UiResult<()> {
+    let Some(update) = newer(&app, &backend).await? else {
+        return Err(UiError { kind: "other", message: "There is no newer version any more.".into() });
+    };
+    let mut done: u64 = 0;
+    let progress = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                done += chunk as u64;
+                let _ = progress.emit("update-progress", (done, total));
+            },
+            || {},
+        )
+        .await
+        .map_err(update_error)?;
+    app.restart()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let backend = Arc::new(Backend::standard().expect("could not determine the home directory"));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(backend)
         .invoke_handler(tauri::generate_handler![
             status,
@@ -197,8 +277,32 @@ pub fn run() {
             link_product,
             profile,
             edit,
-            family
+            family,
+            prefs,
+            set_prefs,
+            send_usage,
+            check_update,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running Toona");
+}
+
+#[cfg(test)]
+mod tests {
+    /// The shape the Toona server answers an update check with must be one the updater reads.
+    #[test]
+    fn the_servers_update_answer_is_understood() {
+        let answer = serde_json::json!({
+            "version": "0.3.1",
+            "notes": "Faster start.",
+            "pub_date": "2026-11-25T01:02:03.456Z",
+            "url": "https://example.com/Toona.app.tar.gz",
+            "signature": "c2lnbmF0dXJl",
+        });
+        let release: tauri_plugin_updater::RemoteRelease = serde_json::from_value(answer).expect("readable");
+        assert_eq!(release.version.to_string(), "0.3.1");
+        assert_eq!(release.download_url("darwin-aarch64").unwrap().as_str(), "https://example.com/Toona.app.tar.gz");
+        assert!(release.pub_date.is_some());
+    }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle, CloudArrowUp, GithubLogo, Warning } from "@phosphor-icons/react";
-import { api, type Card, type Shared, type User } from "./api";
+import { ArrowCircleUp, CheckCircle, CloudArrowUp, GithubLogo, Warning } from "@phosphor-icons/react";
+import { api, type Card, type Prefs, type Shared, type Update, type User } from "./api";
 import { Tree, versionNodes } from "./Tree";
 import { swatchStyle } from "./colour";
 
@@ -19,6 +19,10 @@ export type Sheet =
   | { kind: "link"; label: string; items: Card[]; current: string | null; pick: (key: string | null) => void }
   | { kind: "tree"; versions: Shared[]; current: number }
   | { kind: "saved"; label: string; changes: number; backup: string | null }
+  | { kind: "prefs"; first: boolean; prefs: Prefs; save: (updates: boolean, usage: boolean) => void; check: (() => void) | null }
+  | { kind: "update"; update: Update; install: () => void }
+  | { kind: "updating"; version: string }
+  | { kind: "current"; version: string }
   | { kind: "error"; message: string };
 
 interface Props {
@@ -31,6 +35,9 @@ export function Sheets({ sheet, studioName, close }: Props) {
   const [dontAsk, setDontAsk] = useState(false);
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
+  const [updates, setUpdates] = useState(true);
+  const [usage, setUsage] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
 
   // Fields start empty for each sheet that opens, and only then: the app re-renders
   // every few seconds while a sheet is up, which must not wipe what was typed.
@@ -38,17 +45,27 @@ export function Sheets({ sheet, studioName, close }: Props) {
     setDontAsk(false);
     setNote("");
     setQuery("");
+    // First run: update checks start on, usage numbers start off. Later: as they were left.
+    setUpdates(sheet?.kind === "prefs" && !sheet.first ? sheet.prefs.updates : true);
+    setUsage(sheet?.kind === "prefs" && !sheet.first ? sheet.prefs.usage : false);
+    setProgress(null);
   }, [sheet]);
+
+  const updating = sheet?.kind === "updating";
+  useEffect(() => {
+    if (!updating) return;
+    return api.onUpdateProgress((done, total) => setProgress(total ? Math.min(100, Math.round((100 * done) / total)) : null));
+  }, [updating]);
 
   const closeRef = useRef(close);
   closeRef.current = close;
   const isOpen = sheet !== null;
   useEffect(() => {
     if (!isOpen) return;
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && closeRef.current();
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && !updating && closeRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen]);
+  }, [isOpen, updating]);
 
   if (!sheet) return null;
 
@@ -389,6 +406,127 @@ export function Sheets({ sheet, studioName, close }: Props) {
       );
       break;
 
+    case "prefs":
+      className = "sheet roomy";
+      body = (
+        <>
+          <h2 id="sheet-title">{sheet.first ? "Two choices before you start" : "Settings"}</h2>
+          {sheet.first && <p>Toona works the same whichever you pick, and you can change both later under Settings.</p>}
+          <button type="button" className="setting switch" role="switch" aria-checked={updates} onClick={() => setUpdates(!updates)}>
+            <span>
+              <strong>Check for updates</strong>
+              <span>
+                When Toona opens, it asks api.toona.wiki whether there is a newer version. Nothing installs until you
+                say so.
+              </span>
+            </span>
+            <span className="switch-track" aria-hidden>
+              <span className="switch-thumb" />
+            </span>
+          </button>
+          <button type="button" className="setting switch" role="switch" aria-checked={usage} onClick={() => setUsage(!usage)}>
+            <span>
+              <strong>Share usage numbers</strong>
+              <span>
+                Once a day, tell Toona's makers which version, system, slicer and printer models are in use, and how
+                many filaments were added. No account, no id, and never which filaments or anything in your files.
+              </span>
+            </span>
+            <span className="switch-track" aria-hidden>
+              <span className="switch-thumb" />
+            </span>
+          </button>
+          <details className="sent">
+            <summary>See exactly what would be sent</summary>
+            <pre className="selectable">{JSON.stringify(sheet.prefs.report, null, 2)}</pre>
+            <p>
+              "first", "new_week" and "new_month" say whether this is the first time this copy checked in at all, this
+              week and this month. That is how installs are counted without giving each one an id.
+            </p>
+          </details>
+          {!sheet.first && (
+            <div className="about">
+              <span className="mono">Toona {sheet.prefs.version}</span>
+              {sheet.check && (
+                <button type="button" className="pill-button outline" onClick={sheet.check}>
+                  Check now
+                </button>
+              )}
+            </div>
+          )}
+          <div className="sheet-buttons">
+            {!sheet.first && (
+              <button type="button" onClick={close}>
+                Cancel
+              </button>
+            )}
+            <button type="button" className="go" autoFocus onClick={() => sheet.save(updates, usage)}>
+              {sheet.first ? "Continue" : "Save"}
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "update":
+      body = (
+        <>
+          <div>
+            <ArrowCircleUp size={32} aria-hidden />
+          </div>
+          <h2 id="sheet-title">Toona {sheet.update.version} is ready</h2>
+          {sheet.update.notes ? <p className="notes selectable">{sheet.update.notes}</p> : <p>A newer version of Toona is available.</p>}
+          <p>Installing takes a moment and reopens Toona. Your filaments and settings stay as they are.</p>
+          <div className="sheet-buttons">
+            <button type="button" onClick={close}>
+              Later
+            </button>
+            <button type="button" className="go" autoFocus onClick={sheet.install}>
+              Install and reopen
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "updating":
+      body = (
+        <>
+          <h2 id="sheet-title">Installing Toona {sheet.version}</h2>
+          <p>{progress === null ? "Downloading…" : `Downloading… ${progress}%`} Toona reopens by itself when it's done.</p>
+          <div
+            className={progress === null ? "progress waiting" : "progress"}
+            role="progressbar"
+            aria-label="Download"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress ?? undefined}
+          >
+            <span style={{ width: `${progress ?? 100}%` }} />
+          </div>
+        </>
+      );
+      break;
+
+    case "current":
+      body = (
+        <>
+          <div className="ok-icon">
+            <CheckCircle size={32} aria-hidden />
+          </div>
+          <h2 id="sheet-title">You have the newest version</h2>
+          <p>
+            Toona <span className="mono">{sheet.version}</span> is the latest there is.
+          </p>
+          <div className="sheet-buttons">
+            <button type="button" className="go" autoFocus onClick={close}>
+              Done
+            </button>
+          </div>
+        </>
+      );
+      break;
+
     case "error":
       body = (
         <>
@@ -408,7 +546,7 @@ export function Sheets({ sheet, studioName, close }: Props) {
   }
 
   return (
-    <div className="scrim" onClick={(event) => event.target === event.currentTarget && close()}>
+    <div className="scrim" onClick={(event) => event.target === event.currentTarget && !updating && close()}>
       <div className={className} role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         {body}
       </div>
