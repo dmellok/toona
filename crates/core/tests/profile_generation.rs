@@ -14,6 +14,9 @@ use toona_core::{
 };
 use serde_json::Value;
 
+/// A made-up account. The fixture folder was captured from a real Bambu Studio and its
+/// id rule checked against that account's real filament ids; the account id and those
+/// ids were then swapped for this one's, since the ids are a hash that gives the account away.
 const USER_ID: &str = "10000001";
 const PRINTER: &str = "Bambu Lab X2D 0.4 nozzle";
 
