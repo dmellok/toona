@@ -27,7 +27,7 @@ jobs:
       matrix:
         include:
           - name: macOS (Apple silicon)
-            os: macos-14
+            os: macos-latest
             bundles: app,dmg
           - name: Windows (x64)
             os: windows-latest
@@ -65,6 +65,7 @@ jobs:
         run: npm ci
 
       - name: Build
+        id: build
         working-directory: app
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
@@ -76,11 +77,12 @@ jobs:
           fi
 
       - name: Tests
-        if: always()
+        if: ${{ !cancelled() }}
         run: cargo test --workspace
 
+      # A failed test still leaves the packages to look at.
       - name: Gather the packages
-        id: gather
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           mkdir -p packages
           find target/release/bundle -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
@@ -94,6 +96,7 @@ jobs:
           ls -l packages
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
           name: Toona ${{ matrix.name }}
           path: packages/*
