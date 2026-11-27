@@ -44,6 +44,14 @@ impl SlicerKind {
         }
     }
 
+    /// The application id its Flatpak is published under, which names its folder in `~/.var/app`.
+    fn flatpak_id(self) -> &'static str {
+        match self {
+            Self::BambuStudio => "com.bambulab.BambuStudio",
+            Self::OrcaSlicer => "io.github.softfever.OrcaSlicer",
+        }
+    }
+
     /// Executable names, lowercase, without extension.
     fn process_names(self) -> &'static [&'static str] {
         match self {
@@ -163,10 +171,17 @@ pub struct Slicer {
 impl Slicer {
     /// The slicer's config folder in its standard location for this OS:
     /// `%AppData%\<Name>`, `~/Library/Application Support/<Name>` or `~/.config/<Name>`.
+    /// On Linux a Flatpak install keeps its own, which is used when the standard one is absent.
     pub fn detect(kind: SlicerKind) -> Result<Self> {
         let base = directories::BaseDirs::new()
             .ok_or_else(|| Error::Other("could not determine the home directory".into()))?;
-        Self::at(kind, base.config_dir().join(kind.folder_name()))
+        let standard = Self::at(kind, base.config_dir().join(kind.folder_name()));
+        if standard.is_ok() || !cfg!(target_os = "linux") {
+            return standard;
+        }
+        let flatpak = base.home_dir().join(".var/app").join(kind.flatpak_id()).join("config").join(kind.folder_name());
+        // Report the standard place when neither is there: it is where people look first.
+        Self::at(kind, flatpak).or(standard)
     }
 
     /// A slicer config folder at an explicit path.
