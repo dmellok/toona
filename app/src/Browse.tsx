@@ -40,7 +40,7 @@ function brandScore(typed: string, brand: string): number {
 }
 
 /** A light tint per family of material, so neighbours of different kinds read apart. */
-function materialTone(material: string): string {
+export function materialTone(material: string): string {
   const name = material.toUpperCase();
   if (name.startsWith("PLA") || name === "PHA") return "pla";
   if (["PETG", "PET", "PCTG", "CPE"].some((kind) => name.startsWith(kind))) return "petg";

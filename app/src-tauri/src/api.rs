@@ -245,8 +245,16 @@ pub struct AddedDto {
     pub profile_name: String,
     pub alias: String,
     pub catalogue_key: String,
+    /// Who makes it: the catalogue's brand, or else the vendor written in the profile.
+    pub brand: Option<String>,
     pub printer: String,
     pub hex: Option<String>,
+    /// The material, such as `PETG`, as the profile names it.
+    pub material: Option<String>,
+    /// Nozzle and bed temperature in °C and the flow limit in mm³/s, as the profile sets them.
+    pub nozzle_temp: Option<String>,
+    pub bed_temp: Option<String>,
+    pub max_flow: Option<String>,
     pub synced: bool,
     /// The files are still where Toona put them.
     pub present: bool,
@@ -262,8 +270,16 @@ pub struct AddedDto {
 pub struct OwnDto {
     pub profile_name: String,
     pub alias: String,
+    /// Who makes it: the linked product's brand, or else the vendor written in the profile.
+    pub brand: Option<String>,
     pub printer: String,
     pub hex: Option<String>,
+    /// The material, such as `PETG`, as the profile names it.
+    pub material: Option<String>,
+    /// Nozzle and bed temperature in °C and the flow limit in mm³/s, as the profile sets them.
+    pub nozzle_temp: Option<String>,
+    pub bed_temp: Option<String>,
+    pub max_flow: Option<String>,
     pub synced: bool,
     /// The catalogue product the user said this is, if they have.
     pub catalogue_key: Option<String>,
@@ -301,6 +317,20 @@ pub struct RemoveDto {
     pub backup: Option<String>,
     /// Profiles the cloud still holds; they come back unless deleted in the slicer.
     pub cloud_synced: Vec<String>,
+}
+
+/// How many backups the restore list offers.
+const BACKUPS_LISTED: usize = 30;
+
+/// A backup of the slicer's folder that can be restored.
+#[derive(Serialize)]
+pub struct BackupDto {
+    pub path: String,
+    /// UTC, RFC 3339.
+    pub taken: String,
+    /// What Toona was about to do when it took it; empty for older backups.
+    pub note: String,
+    pub bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -662,12 +692,22 @@ impl Backend {
                 let recipe = profile.recipe.clone().or_else(|| {
                     recover_recipe(studio.as_ref()?, catalogue.as_deref()?, &profile.catalogue_key, &profile.printer, json?)
                 });
+                let facts = json.map(|path| Facts::read(path)).unwrap_or_default();
                 AddedDto {
                     profile_name: profile.profile_name.clone(),
                     alias: profile.alias.clone(),
                     catalogue_key: profile.catalogue_key.clone(),
+                    brand: catalogue
+                        .as_deref()
+                        .and_then(|c| c.filaments().iter().find(|f| f.key == profile.catalogue_key))
+                        .map(|f| f.brand.clone())
+                        .or(facts.vendor),
                     printer: profile.printer.clone(),
-                    hex: json.and_then(|path| profile_colour(path)),
+                    hex: facts.hex,
+                    material: facts.material,
+                    nozzle_temp: facts.nozzle_temp,
+                    bed_temp: facts.bed_temp,
+                    max_flow: facts.max_flow,
                     synced: json.and_then(|path| Slicer::preset_info(path)).is_some_and(|info| info.is_cloud_synced()),
                     present: profile.files.iter().all(|f| f.exists()),
                     parent: recipe.as_ref().map(|r| preset_alias(&r.parent).to_string()),
@@ -691,11 +731,17 @@ impl Backend {
                 let key = products.get(&f.name).cloned();
                 let filament = key.as_ref().and_then(|key| catalogue.as_deref()?.filaments().iter().find(|c| &c.key == key));
                 let recipe = filament.and_then(|c| recover_recipe(studio.as_ref()?, catalogue.as_deref()?, &c.key, &printer, &f.path));
+                let facts = Facts::read(&f.path);
                 Some(OwnDto {
                     profile_name: f.name.clone(),
                     alias: f.alias().to_string(),
+                    brand: filament.map(|c| c.brand.clone()).or(facts.vendor),
                     printer,
-                    hex: profile_colour(&f.path),
+                    hex: facts.hex,
+                    material: facts.material,
+                    nozzle_temp: facts.nozzle_temp,
+                    bed_temp: facts.bed_temp,
+                    max_flow: facts.max_flow,
                     synced: Slicer::preset_info(&f.path).is_some_and(|info| info.is_cloud_synced()),
                     product: filament.map(|c| format!("{} {}", c.brand, c.name)),
                     catalogue_key: filament.map(|c| c.key.clone()),
@@ -747,6 +793,114 @@ impl Backend {
             removed: report.removed.len(),
             backup: report.backup.map(|b| b.display().to_string()),
             cloud_synced: report.cloud_synced,
+        })
+    }
+
+    /// Removes profiles by their full names behind one backup: what Toona added, and
+    /// custom filaments the user made in the slicer themselves.
+    pub fn remove_many(&self, profile_names: &[String]) -> UiResult<RemoveDto> {
+        let studio = self.studio()?;
+        let report = install::remove_many(&studio.slicer, &studio.conf, &self.dirs, profile_names)?;
+        for name in profile_names {
+            self.community.unlink(name);
+            // The note of which product it was goes with it; failing to forget it harms nothing.
+            let _ = self.link_product(name, None);
+        }
+        Ok(RemoveDto {
+            removed: report.removed.len(),
+            backup: report.backup.map(|b| b.display().to_string()),
+            cloud_synced: report.cloud_synced,
+        })
+    }
+
+    /// The backups Toona made of the slicer's folder, newest first.
+    pub fn backups(&self) -> UiResult<Vec<BackupDto>> {
+        let studio = self.studio()?;
+        Ok(install::backups(&studio.slicer, &self.dirs)?
+            .into_iter()
+            .take(BACKUPS_LISTED)
+            .map(|backup| BackupDto { path: backup.path.display().to_string(), taken: backup.taken, note: backup.note, bytes: backup.bytes })
+            .collect())
+    }
+
+    /// Puts the slicer's folder back as it was in a backup. How it is now is backed up first.
+    pub fn restore_backup(&self, path: &str) -> UiResult<String> {
+        let studio = self.studio()?;
+        let safety = install::restore(&studio.slicer, &self.dirs, std::path::Path::new(path))?;
+        Ok(safety.display().to_string())
+    }
+
+    /// Adds a filament Toona already added for one nozzle to more printer presets: the same
+    /// product, colour, name and base, with what the user or the community changed carried over.
+    pub fn add_nozzles(&self, profile_name: &str, printers: &[String], borrow_tuned: bool, allow_cloud_sync: bool) -> UiResult<InstallDto> {
+        let studio = self.studio()?;
+        let catalogue = self.load_catalogue(Refresh::IfMissing)?;
+        let manifest = self.manifest();
+        let source = manifest
+            .profiles
+            .iter()
+            .find(|p| p.slicer == self.kind.id() && p.profile_name == profile_name)
+            .ok_or_else(|| UiError::from(Error::NotInstalled(profile_name.to_string())))?;
+        let filament = find_by_key(&catalogue, &source.catalogue_key)?;
+        let json = source.files.iter().find(|f| f.extension().is_some_and(|ext| ext == "json"));
+        let recipe = source
+            .recipe
+            .clone()
+            .or_else(|| recover_recipe(&studio, &catalogue, &source.catalogue_key, &source.printer, json?));
+        // Which colour it is: the one whose usual name it has, or else the one of its colour.
+        let hex = json.and_then(|path| Facts::read(path).hex);
+        let variant = filament
+            .variants
+            .iter()
+            .find(|v| profile_alias(filament, Some(v)) == source.alias)
+            .or_else(|| filament.variants.iter().find(|v| hex.is_some() && clean_hex(v.color_hex.as_deref()) == hex));
+        let base = recipe.as_ref().map(|r| preset_alias(&r.parent).to_string());
+
+        let mut planned = Vec::new();
+        let mut profiles = Vec::new();
+        for printer in printers {
+            let request = |base: Option<String>| InstallRequest {
+                key: filament.key.clone(),
+                variant: variant.map(|v| v.name.clone()),
+                printers: vec![printer.clone()],
+                base,
+                alias: Some(source.alias.clone()),
+                borrow_tuned,
+                allow_cloud_sync,
+                dry_run: false,
+            };
+            // The same base where this nozzle has it; otherwise the one Toona would pick.
+            let (_, mut one, described) = match self.plan(&studio, &catalogue, &request(base.clone())) {
+                Ok(done) => done,
+                Err(_) if base.is_some() => self.plan(&studio, &catalogue, &request(None))?,
+                Err(error) => return Err(error),
+            };
+            for item in &mut one {
+                let Some(new) = item.recipe.as_mut() else { continue };
+                let carried = recipe.iter().flat_map(|r| &r.changes).filter(|c| matches!(c.layer, Layer::Community | Layer::You));
+                for change in carried {
+                    // Only settings this nozzle's profile has, shaped the way it holds them.
+                    let Some(current) = item.profile.settings.get(&change.key).cloned() else { continue };
+                    let value = single(&change.to).map_or_else(|| change.to.clone(), |text| filled(&current, text));
+                    let from = new.changes.iter().find(|c| c.key == change.key).map_or(Some(current), |c| c.from.clone());
+                    new.changes.retain(|c| c.key != change.key);
+                    new.changes.push(toona_core::Change { key: change.key.clone(), layer: change.layer, from, to: value.clone() });
+                    item.profile.settings.insert(change.key.clone(), value);
+                }
+                new.changes.sort_by(|a, b| a.key.cmp(&b.key));
+            }
+            planned.extend(one);
+            profiles.extend(described);
+        }
+        let options = InstallOptions { confirm_cloud_sync: allow_cloud_sync, dry_run: false };
+        let report = install::install(&studio.slicer, &studio.conf, &self.dirs, &planned, options)?;
+        Ok(InstallDto {
+            alias: source.alias.clone(),
+            dry_run: report.dry_run,
+            profiles,
+            files: report.files.iter().map(|f| f.display().to_string()).collect(),
+            backup: report.backup.map(|b| b.display().to_string()),
+            will_cloud_sync: report.will_cloud_sync,
         })
     }
 
@@ -1417,6 +1571,42 @@ fn clean_hex(raw: Option<&str>) -> Option<String> {
 fn profile_colour(path: &std::path::Path) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
     clean_hex(json.get("default_filament_colour")?.get(0)?.as_str())
+}
+
+/// What a profile file says about its filament, for listing it.
+#[derive(Default)]
+struct Facts {
+    hex: Option<String>,
+    /// Left out when it is the slicer's placeholder for "nobody in particular".
+    vendor: Option<String>,
+    material: Option<String>,
+    nozzle_temp: Option<String>,
+    bed_temp: Option<String>,
+    max_flow: Option<String>,
+}
+
+impl Facts {
+    fn read(path: &std::path::Path) -> Self {
+        let Some(json) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        else {
+            return Self::default();
+        };
+        // The first value: on a printer with two nozzles, the main one's.
+        let text = |key: &str| {
+            let value = json.get(key)?;
+            let text = value.as_str().or_else(|| value.get(0)?.as_str())?.trim();
+            (!text.is_empty()).then(|| text.to_string())
+        };
+        Self {
+            hex: clean_hex(text("default_filament_colour").as_deref()),
+            vendor: text("filament_vendor").filter(|vendor| !vendor.eq_ignore_ascii_case("generic")),
+            material: text("filament_type"),
+            nozzle_temp: text("nozzle_temperature"),
+            // The smooth plate most printers ship with, or else the textured one.
+            bed_temp: text("hot_plate_temp").or_else(|| text("textured_plate_temp")),
+            max_flow: text(FLOW_KEY),
+        }
+    }
 }
 
 /// A setting's value as people read it: `["220", "220"]` is `220`.

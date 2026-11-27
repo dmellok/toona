@@ -671,21 +671,6 @@ select.chip.on {
 
 /* In Studio */
 
-/* Sections flow into as many columns as the window has room for. */
-.studio-columns {
-  columns: 520px;
-  column-gap: 32px;
-}
-
-.studio-section {
-  break-inside: avoid;
-  padding-bottom: 28px;
-}
-
-.in-studio .studio-section h2 {
-  margin-top: 0;
-}
-
 .in-studio h1 {
   margin: 12px 0 18px;
   font-family: var(--display);
@@ -694,70 +679,398 @@ select.chip.on {
   letter-spacing: -0.02em;
 }
 
-.in-studio h2 {
-  margin: 34px 0 6px;
-  font-family: var(--display);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+/* One list of everything in the slicer: search and filters, then filaments under their maker. */
+
+.studio-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
-.section-head {
+.filter-note {
+  margin-left: 6px;
+  font-size: 13px;
+}
+
+.guess-all {
+  margin-top: 12px;
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 16px;
-  margin-bottom: 14px;
+  align-items: center;
+  gap: 8px 12px;
 }
 
-.section-head p {
+.guess-all > span {
   flex: 1 1 320px;
+}
+
+.group-head {
+  margin: 26px 0 8px;
+}
+
+.group-head button,
+.imported-toggle {
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.rows {
-  display: flex;
-  flex-direction: column;
+.group-head [aria-expanded="false"] svg,
+.imported-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+.group-head .count,
+.imported-toggle .count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--hairline);
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 430px), 1fr));
+  align-items: start;
   gap: 8px;
 }
 
-.row {
+.tile {
   background: var(--card);
-  border-radius: 16px;
-  padding: 12px 12px 12px 16px;
+  border-radius: 14px;
+  padding: 10px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 12px;
 }
 
-.row .dot {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--hairline);
+/* The filament's colour, as a swatch like the ones in the catalogue. Dashed when it has none. */
+.tile-colour {
   flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--warn);
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
 }
 
-.row .text {
-  flex: 1 1 220px;
+.tile.plain {
+  align-items: flex-start;
+}
+
+.tile .mark {
+  padding-top: 3px;
+  color: var(--warn);
+  display: flex;
+}
+
+.tile .text {
+  flex: 1 1 200px;
   min-width: 0;
 }
 
-.row .title {
+.tile .title {
   font-family: var(--display);
-  font-size: 18px;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* A name that opens the profile's own page. */
+button.title {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+button.title:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+/* The numbers people open a profile to check. */
+.tile-facts {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tile[data-selected="true"] {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.tile-check {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0 2px 0 4px;
+  accent-color: var(--ink);
+}
+
+.tag.material {
+  border-color: transparent;
+  border-radius: 6px;
+  background: #ededea;
+  color: var(--ink);
+}
+
+/* A nozzle the filament is not in the slicer for yet. */
+button.tag.add {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+button.tag.add:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.tag.warn {
+  border-color: transparent;
+  background: #fbe9da;
+  color: var(--warn);
+}
+
+.filter-gap {
+  width: 10px;
+}
+
+/* What can be done with the ticked filaments, kept in reach at the foot of the window. */
+.select-bar {
+  position: sticky;
+  bottom: 16px;
+  margin-top: 20px;
+  padding: 10px 10px 10px 18px;
+  border-radius: 16px;
+  background: var(--ink);
+  color: #fff;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.select-bar .spacer {
+  flex: 1 1 0;
+}
+
+.select-bar .secondary {
+  min-height: 40px;
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.backup-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(340px, 44vh);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backup-list li {
+  min-height: 56px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  background: var(--ground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backup-list li > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.backup-list strong {
   font-weight: 600;
 }
 
-.row .sub {
+.backup-list .muted {
+  font-size: 13px;
+}
+
+.about-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.tile .sub {
   color: var(--muted);
   font-size: 13px;
+}
+
+.tags {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag {
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Nozzle tags that choose which profile the tile is showing. */
+button.tag {
+  min-width: 36px;
+  justify-content: center;
+  color: var(--ink);
+}
+
+button.tag[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.tag.toona {
+  border-color: transparent;
+  background: var(--hairline);
+  color: var(--ink);
+}
+
+.tag.product {
+  font-family: var(--text);
+  max-width: 100%;
+}
+
+.tag.product span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-icon {
+  display: inline-flex;
+  padding: 0 2px;
+  color: var(--muted);
+}
+
+.warn-text {
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.tile-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.tile .secondary {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.secondary.icon {
+  width: 40px;
+  padding: 0;
+  justify-content: center;
+}
+
+.tile-guess,
+.tile-details {
+  flex: 1 1 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.tile-guess {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tile-guess > span {
+  flex: 1 1 180px;
+  color: var(--muted);
+}
+
+.tile-guess strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.tile-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Imported profiles are a job to do, not part of the library, so they wait folded at the end. */
+.imported {
+  margin-top: 30px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.imported-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin-bottom: 10px;
+}
+
+.imported-toggle {
+  min-height: 44px;
+}
+
+.imported-head .muted {
+  flex: 1 1 320px;
+  font-size: 13px;
+}
+
+.link-list .likely {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .secondary {
@@ -838,14 +1151,6 @@ select.chip.on {
 
 .change-values s {
   color: var(--muted);
-}
-
-.row-details {
-  flex: 1 1 100%;
-  padding: 4px 4px 6px 50px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
 
 /* Sheets */
@@ -1888,10 +2193,6 @@ select.chip.on {
   grid-template-columns: repeat(auto-fill, minmax(min(236px, 100%), 1fr));
 }
 
-.row .text {
-  flex: 1 1 220px;
-}
-
 .sheet-buttons {
   flex-wrap: wrap;
 }
@@ -2092,27 +2393,32 @@ select.chip.on {
   background: #ededea;
 }
 
-.card-meta .material.pla {
+.card-meta .material.pla,
+.tag.material.pla {
   background: #e3f1e6;
   color: #1f5a33;
 }
 
-.card-meta .material.petg {
+.card-meta .material.petg,
+.tag.material.petg {
   background: #e1ecf8;
   color: #1d4e86;
 }
 
-.card-meta .material.abs {
+.card-meta .material.abs,
+.tag.material.abs {
   background: #fbe9da;
   color: #8a4b00;
 }
 
-.card-meta .material.tpu {
+.card-meta .material.tpu,
+.tag.material.tpu {
   background: #eee6fa;
   color: #5b2ea6;
 }
 
-.card-meta .material.eng {
+.card-meta .material.eng,
+.tag.material.eng {
   background: #ece9e2;
   color: #4a4338;
 }
@@ -2367,31 +2673,6 @@ select.chip.on {
 
 .flow-note {
   font-size: 13px;
-}
-
-.printer-group + .printer-group {
-  margin-top: 22px;
-}
-
-.printer-head {
-  margin: 0 0 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.printer-head .count {
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: var(--hairline);
-  color: var(--ink);
-  letter-spacing: 0;
 }
 
 /* The manufacturer published settings for this very printer. */

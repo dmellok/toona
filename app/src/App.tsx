@@ -5,6 +5,7 @@ import {
   asUiError,
   type Account,
   type Added,
+  type Backup,
   type Card,
   type CatalogueData,
   type Detail,
@@ -20,7 +21,8 @@ import {
 } from "./api";
 import { Browse } from "./Browse";
 import { DetailPanel } from "./DetailPanel";
-import { InStudioView } from "./InStudioView";
+import { filamentCount, InStudioView, isProduct, NO_FILTERS, place, sharedKey, type ProductLink, type Removal, type StudioFilters } from "./InStudioView";
+import { guesses } from "./match";
 import { Logo } from "./Logo";
 import { ProfileView } from "./ProfileView";
 import { Sheets, type Sheet } from "./Sheets";
@@ -93,6 +95,16 @@ export default function App() {
   /** Shared profiles for one filament; shown only while that filament is the one on screen. */
   const [shared, setShared] = useState<{ key: string; versions: Shared[] }>({ key: "", versions: [] });
 
+  /** What the In Studio list is narrowed to. All but the search is kept between sessions. */
+  const [studioFilters, setStudioFilters] = useState<StudioFilters>(() => ({
+    ...NO_FILTERS,
+    ...recall<Partial<StudioFilters>>("toona.studio", {}),
+    query: "",
+  }));
+  /** How many profiles other people shared for the products in the slicer, by product, printer and nozzle. */
+  const [sharedCounts, setSharedCounts] = useState<Record<string, number>>({});
+  const sharedAsked = useRef(new Set<string>());
+
   /** The profile whose own page is open over the In Studio list. */
   const [profile, setProfile] = useState<Profile | null>(null);
 
@@ -138,6 +150,7 @@ export default function App() {
           })
           .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
       },
+      backups: first ? null : showBackups,
       check: first
         ? null
         : () => {
@@ -335,16 +348,67 @@ export default function App() {
     }
   };
 
-  const remove = (name: string, label: string) =>
+  /** Takes out what Toona added. Each name is a filament name or one profile's full name. */
+  const remove = (names: string[], label: string) =>
     setSheet({
       kind: "confirm-remove",
       label,
       confirm: () =>
         write(async () => {
-          const result = await api.remove(name);
-          return { kind: "removed", label, stillInCloud: result.cloud_synced.length > 0 };
+          let stillInCloud = false;
+          for (const name of names) stillInCloud = (await api.remove(name)).cloud_synced.length > 0 || stillInCloud;
+          return { kind: "removed", label, stillInCloud };
         }, true),
     });
+
+  /** Puts the slicer's folder back as it was in a backup. The answer offers to undo that. */
+  const restoreNow = (path: string): Promise<void> =>
+    write(async () => {
+      const before = await api.restoreBackup(path);
+      return { kind: "restored", undo: () => void restoreNow(before) };
+    }, true);
+
+  function showBackups() {
+    api
+      .backups()
+      .then((backups) =>
+        setSheet({
+          kind: "backups",
+          backups,
+          restore: (backup: Backup) => setSheet({ kind: "confirm-restore", backup, confirm: () => void restoreNow(backup.path) }),
+        }),
+      )
+      .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+  }
+
+  /** Takes profiles out by their full names, behind one backup: Toona's and the person's own. */
+  const removeProfiles = ({ profileNames, label, own, synced }: Removal) =>
+    setSheet({
+      kind: "confirm-remove",
+      label,
+      own,
+      synced,
+      confirm: () =>
+        write(async () => {
+          const result = await api.removeMany(profileNames);
+          const backup = result.backup;
+          return { kind: "removed", label, stillInCloud: result.cloud_synced.length > 0, undo: backup ? () => void restoreNow(backup) : null };
+        }, true),
+    });
+
+  /** Adds a filament that is in the slicer for one nozzle to more of them. */
+  const addNozzles = (profileName: string, printerNames: string[], label: string) =>
+    void write(async (allowSync) => {
+      const result = await api.addNozzles(profileName, printerNames, borrowTuned, allowSync);
+      return { kind: "added", alias: label, colourName: label, hex: null, backup: result.backup };
+    }, syncOk);
+
+  const seeShared = (key: string) => {
+    setSelectedKey(key);
+    setDetailOpen(true);
+    setProfile(null);
+    setView("browse");
+  };
 
   const fix = (names: string[]) =>
     void write(async (allowSync) => {
@@ -421,20 +485,28 @@ export default function App() {
     }, syncOk);
   };
 
-  const linkProduct = (row: Own) =>
+  /** Notes which product some of the person's own filaments are; a null key forgets it. */
+  const linkNow = (links: { profileNames: string[]; key: string | null }[]) => {
+    const pairs = links.flatMap((link) => link.profileNames.map((name) => [name, link.key] as const));
+    Promise.all(pairs.map(([name, key]) => api.linkProduct(name, key)))
+      .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }))
+      .finally(refreshInStudio);
+  };
+
+  const linkProduct = (profileNames: string[], label: string, current: string | null) => {
+    const products = (catalogue?.items ?? []).filter((item) => !item.resin);
     setSheet({
       kind: "link",
-      label: row.alias,
-      items: (catalogue?.items ?? []).filter((item) => !item.resin),
-      current: row.catalogue_key,
+      label,
+      items: products,
+      likely: guesses(label, products).slice(0, 3).map((guess) => guess.item),
+      current,
       pick: (key) => {
         setSheet(null);
-        api
-          .linkProduct(row.profile_name, key)
-          .then(refreshInStudio)
-          .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+        linkNow([{ profileNames, key }]);
       },
     });
+  };
 
   const showHistory = (version: Shared) => {
     api
@@ -493,6 +565,23 @@ export default function App() {
     }
   };
 
+  // Ask once for each product, printer and nozzle in the slicer how many profiles were shared for it.
+  useEffect(() => {
+    if (!community || !inStudio) return;
+    for (const row of [...inStudio.added, ...(inStudio.own ?? [])]) {
+      const key = row.catalogue_key;
+      const { model, nozzle } = place(row.printer, printers);
+      if (!isProduct(key) || !nozzle) continue;
+      const id = sharedKey(key, model, nozzle);
+      if (sharedAsked.current.has(id)) continue;
+      sharedAsked.current.add(id);
+      api
+        .community(key, model, nozzle)
+        .then((versions) => setSharedCounts((counts) => ({ ...counts, [id]: versions.filter((v) => !v.own).length })))
+        .catch(() => undefined);
+    }
+  }, [community, inStudio, printers]);
+
   const selectFromBarcode = (key: string, variantName: string) => {
     setSelectedKey(key);
     setDetailOpen(true);
@@ -501,7 +590,7 @@ export default function App() {
 
   const items: Card[] = catalogue?.items ?? [];
   const studioName = status?.slicer ?? "Bambu Studio";
-  const addedCount = inStudio?.added.length ?? 0;
+  const addedCount = filamentCount(inStudio);
 
   return (
     <div className="shell">
@@ -674,7 +763,7 @@ export default function App() {
               }}
               busy={busy}
               onInstall={install}
-              onRemove={() => remove(variant?.alias ?? detail.alias, variant?.alias ?? detail.alias)}
+              onRemove={() => remove([variant?.alias ?? detail.alias], variant?.alias ?? detail.alias)}
               onExport={exportBundle}
               shared={shared.key === detail.key ? shared.versions : []}
               signedIn={user !== null}
@@ -703,12 +792,24 @@ export default function App() {
             data={inStudio}
             studioName={studioName}
             busy={busy}
+            items={items}
+            printers={printers}
+            activeModel={activeModel}
+            filters={studioFilters}
+            onFilters={(next) => {
+              setStudioFilters(next);
+              remember("toona.studio", { ...next, query: "" });
+            }}
+            sharedCounts={sharedCounts}
+            onAddNozzles={addNozzles}
+            onSeeShared={seeShared}
             onBrowse={() => setView("browse")}
-            onRemove={(row) => remove(row.profile_name, row.alias)}
+            onRemove={removeProfiles}
             onFix={fix}
             onShare={community ? share : null}
             onOpen={openProfile}
             onLink={linkProduct}
+            onLinkNow={(links: ProductLink[]) => linkNow(links)}
           />
         </main>
       )}

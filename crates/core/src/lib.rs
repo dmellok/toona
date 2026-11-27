@@ -18,7 +18,7 @@ pub mod tuned;
 pub use catalogue::{BarcodeMatch, Catalogue, CatalogueFilament, MaterialClass, Refresh, SearchFilter, Variant};
 pub use convert::{convert_inherited, convert_inherited_with_recipes, ConvertRequest};
 pub use error::{Error, Result};
-pub use install::{AppDirs, InstallOptions, InstallReport, InstalledProfile, Manifest, PlannedProfile, UninstallReport};
+pub use install::{AppDirs, Backup, InstallOptions, InstallReport, InstalledProfile, Manifest, PlannedProfile, UninstallReport};
 pub use mapping::{build_profile, build_profile_with_recipe, ProfileRequest};
 pub use profile::{FilamentProfile, PresetInfo};
 pub use recipe::{Change, Layer, Recipe};

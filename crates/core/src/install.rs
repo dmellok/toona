@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::profile::{FilamentProfile, PresetInfo};
 use crate::recipe::Recipe;
 use crate::slicer::{AppConf, Slicer};
+use crate::system::preset_alias;
 
 const MANIFEST_FILE: &str = "manifest.json";
 const MANIFEST_SCHEMA: u32 = 1;
@@ -193,7 +194,8 @@ fn install_checked(
         return Err(Error::SlicerRunning(slicer.kind.display_name()));
     }
 
-    let backup = backup_user_folder(slicer, dirs)?;
+    let what = planned.first().map(|item| item.profile.alias()).unwrap_or("profiles");
+    let backup = backup_noted(slicer, dirs, &format!("Before adding {what}"))?;
     fs::create_dir_all(&target_dir).map_err(Error::write(&target_dir))?;
     let installed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     for (item, json_path, info_path) in &targets {
@@ -251,7 +253,7 @@ fn uninstall_checked(slicer: &Slicer, dirs: &AppDirs, query: &str, slicer_runnin
         return Err(Error::SlicerRunning(slicer.kind.display_name()));
     }
 
-    let backup = backup_user_folder(slicer, dirs)?;
+    let backup = backup_noted(slicer, dirs, &format!("Before removing {}", doomed[0].alias))?;
     let user_root = slicer.user_root();
     let mut report = UninstallReport { removed: Vec::new(), missing: Vec::new(), backup: Some(backup), cloud_synced: Vec::new() };
 
@@ -283,6 +285,89 @@ fn uninstall_checked(slicer: &Slicer, dirs: &AppDirs, query: &str, slicer_runnin
         }
         manifest.profiles.retain(|p| p != profile);
         manifest.save(dirs)?;
+    }
+    Ok(report)
+}
+
+/// Removes profiles by their full names in one go, behind a single backup: both
+/// what the tool installed and custom filaments the user made in the slicer themselves.
+/// Imported profiles, and names that are neither, are refused before anything is touched.
+pub fn remove_many(slicer: &Slicer, conf: &AppConf, dirs: &AppDirs, names: &[String]) -> Result<UninstallReport> {
+    remove_many_checked(slicer, conf, dirs, names, slicer.is_running()?)
+}
+
+fn remove_many_checked(
+    slicer: &Slicer,
+    conf: &AppConf,
+    dirs: &AppDirs,
+    names: &[String],
+    slicer_running: bool,
+) -> Result<UninstallReport> {
+    let mut manifest = Manifest::load(dirs)?;
+    let filaments = slicer.user_filaments(conf)?;
+    let user_root = slicer.user_root();
+    // Each name's files, and whether the manifest lists it.
+    let mut doomed: Vec<(&String, Vec<PathBuf>, bool)> = Vec::new();
+    for name in names {
+        let installed: Vec<&InstalledProfile> =
+            manifest.profiles.iter().filter(|p| p.slicer == slicer.kind.id() && p.profile_name == *name).collect();
+        if !installed.is_empty() {
+            let files: Vec<PathBuf> = installed.iter().flat_map(|p| p.files.iter().cloned()).collect();
+            // The manifest is a plain file; never let it point the tool outside the user folder.
+            if let Some(file) = files.iter().find(|file| !file.starts_with(&user_root)) {
+                return Err(Error::Other(format!(
+                    "manifest lists {} which is outside {}; not removing it",
+                    file.display(),
+                    user_root.display()
+                )));
+            }
+            doomed.push((name, files, true));
+            continue;
+        }
+        let own: Vec<PathBuf> = filaments
+            .iter()
+            .filter(|f| f.is_root && f.name == *name && !manifest.owns(&f.path))
+            .flat_map(|f| [f.path.clone(), f.path.with_extension("info")])
+            .collect();
+        if own.is_empty() {
+            return Err(Error::Other(format!(
+                "\"{name}\" is neither something Toona added nor a filament you made in {}",
+                slicer.kind.display_name()
+            )));
+        }
+        doomed.push((name, own, false));
+    }
+    if slicer_running {
+        return Err(Error::SlicerRunning(slicer.kind.display_name()));
+    }
+
+    let what = match names {
+        [one] => preset_alias(one).to_string(),
+        _ => format!("{} profiles", names.len()),
+    };
+    let backup = backup_noted(slicer, dirs, &format!("Before removing {what}"))?;
+    let mut report = UninstallReport { removed: Vec::new(), missing: Vec::new(), backup: Some(backup), cloud_synced: Vec::new() };
+    for (name, files, installed) in doomed {
+        let synced = files
+            .iter()
+            .filter(|f| f.extension().is_some_and(|ext| ext == "json"))
+            .filter_map(|f| Slicer::preset_info(f))
+            .any(|info| info.is_cloud_synced());
+        if synced {
+            report.cloud_synced.push(name.clone());
+        }
+        for file in files {
+            if file.exists() {
+                fs::remove_file(&file).map_err(Error::write(&file))?;
+                report.removed.push(file);
+            } else if installed {
+                report.missing.push(file);
+            }
+        }
+        if installed {
+            manifest.profiles.retain(|p| !(p.slicer == slicer.kind.id() && p.profile_name == *name));
+            manifest.save(dirs)?;
+        }
     }
     Ok(report)
 }
@@ -338,7 +423,7 @@ fn update_checked(
         return Err(Error::SlicerRunning(slicer.kind.display_name()));
     }
 
-    let backup = backup_user_folder(slicer, dirs)?;
+    let backup = backup_noted(slicer, dirs, &format!("Before editing {}", profile.alias()))?;
     // A newer time marks the file as changed. For a profile the cloud already holds,
     // `update` is the slicer's own state for "changed here, upload it" (PROFILE_SPEC.md §4).
     info.updated_time = PresetInfo::new_unsynced().updated_time.max(info.updated_time + 1);
@@ -359,8 +444,16 @@ pub fn backup_user_folder(slicer: &Slicer, dirs: &AppDirs) -> Result<PathBuf> {
     let backups = dirs.backups_dir();
     fs::create_dir_all(&backups).map_err(Error::write(&backups))?;
 
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
-    let path = backups.join(format!("{}-user-{stamp}.zip", slicer.kind.id()));
+    // The name is the time to the millisecond. Never write over an earlier backup:
+    // if one already has this name, wait for the next millisecond.
+    let path = loop {
+        let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+        let path = backups.join(format!("{}-user-{stamp}.zip", slicer.kind.id()));
+        if !path.exists() {
+            break path;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
     let file = fs::File::create(&path).map_err(Error::write(&path))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -387,6 +480,136 @@ pub fn backup_user_folder(slicer: &Slicer, dirs: &AppDirs) -> Result<PathBuf> {
     }
     zip.finish().map_err(|e| failed(&e))?;
     Ok(path)
+}
+
+/// What a backup's note file holds: why it was taken, and what the tool had installed then.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BackupNote {
+    /// What was about to happen, such as "Before removing Test PLA".
+    #[serde(default)]
+    note: String,
+    /// The manifest's profiles for this slicer when the backup was taken.
+    #[serde(default)]
+    profiles: Vec<InstalledProfile>,
+}
+
+/// A backup of the slicer's user folder that can be restored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backup {
+    pub path: PathBuf,
+    /// UTC, RFC 3339.
+    pub taken: String,
+    /// What was about to happen when it was taken. Empty for backups from before notes were kept.
+    pub note: String,
+    pub bytes: u64,
+}
+
+/// Backs up the user folder and writes, next to the zip, why and what the manifest
+/// listed, so that restoring it also puts back the tool's record of what it installed.
+fn backup_noted(slicer: &Slicer, dirs: &AppDirs, note: &str) -> Result<PathBuf> {
+    let path = backup_user_folder(slicer, dirs)?;
+    let profiles =
+        Manifest::load(dirs)?.profiles.into_iter().filter(|p| p.slicer == slicer.kind.id()).collect();
+    let text = serde_json::to_string_pretty(&BackupNote { note: note.to_string(), profiles })
+        .expect("backup note serializes to JSON");
+    write_atomically(&path.with_extension("json"), text.as_bytes())?;
+    Ok(path)
+}
+
+fn backup_note(backup: &Path) -> Option<BackupNote> {
+    serde_json::from_str(&fs::read_to_string(backup.with_extension("json")).ok()?).ok()
+}
+
+/// This slicer's backups, newest first.
+pub fn backups(slicer: &Slicer, dirs: &AppDirs) -> Result<Vec<Backup>> {
+    let folder = dirs.backups_dir();
+    if !folder.is_dir() {
+        return Ok(Vec::new());
+    }
+    let prefix = format!("{}-user-", slicer.kind.id());
+    let mut found = Vec::new();
+    for entry in fs::read_dir(&folder).map_err(Error::read(&folder))? {
+        let path = entry.map_err(Error::read(&folder))?.path();
+        let ours = path.file_name().is_some_and(|name| name.to_string_lossy().starts_with(&prefix));
+        if !ours || path.extension().is_none_or(|ext| ext != "zip") {
+            continue;
+        }
+        let Ok(meta) = fs::metadata(&path) else { continue };
+        let taken = meta
+            .modified()
+            .map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+            .unwrap_or_default();
+        let note = backup_note(&path).map(|note| note.note).unwrap_or_default();
+        found.push(Backup { path, taken, note, bytes: meta.len() });
+    }
+    // The file name carries the time it was taken, so names sort oldest to newest.
+    found.sort_by(|a, b| b.path.cmp(&a.path));
+    Ok(found)
+}
+
+/// Puts the user folder back as it was in `backup`, after backing up how it is now, so
+/// a restore can itself be undone. Returns that new backup.
+pub fn restore(slicer: &Slicer, dirs: &AppDirs, backup: &Path) -> Result<PathBuf> {
+    restore_checked(slicer, dirs, backup, slicer.is_running()?)
+}
+
+fn restore_checked(slicer: &Slicer, dirs: &AppDirs, backup: &Path, slicer_running: bool) -> Result<PathBuf> {
+    let failed = |error: &dyn std::fmt::Display| Error::Other(format!("could not restore the backup: {error}"));
+    let Some(chosen) = backups(slicer, dirs)?.into_iter().find(|known| known.path == backup) else {
+        return Err(Error::Other(format!("{} is not one of the backups for {}", backup.display(), slicer.kind.display_name())));
+    };
+    if slicer_running {
+        return Err(Error::SlicerRunning(slicer.kind.display_name()));
+    }
+
+    // Unpack beside the user folder first, so a broken archive leaves everything as it is.
+    let user_root = slicer.user_root();
+    let incoming = user_root.with_file_name("user.toona-restoring");
+    let outgoing = user_root.with_file_name("user.toona-replaced");
+    for leftover in [&incoming, &outgoing] {
+        if leftover.exists() {
+            fs::remove_dir_all(leftover).map_err(Error::write(leftover))?;
+        }
+    }
+    fs::create_dir_all(&incoming).map_err(Error::write(&incoming))?;
+    let mut archive =
+        zip::ZipArchive::new(fs::File::open(&chosen.path).map_err(Error::read(&chosen.path))?).map_err(|e| failed(&e))?;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|e| failed(&e))?;
+        // Names that would land outside the folder are not ours; refuse the whole archive.
+        let Some(relative) = entry.enclosed_name().map(|name| name.to_path_buf()) else {
+            return Err(failed(&"it holds a path that leads outside the folder"));
+        };
+        let target = incoming.join(relative);
+        if entry.is_dir() {
+            fs::create_dir_all(&target).map_err(Error::write(&target))?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(Error::write(parent))?;
+            }
+            let mut file = fs::File::create(&target).map_err(Error::write(&target))?;
+            std::io::copy(&mut entry, &mut file).map_err(|e| failed(&e))?;
+        }
+    }
+
+    let safety = backup_noted(slicer, dirs, "Before restoring an earlier backup")?;
+    fs::rename(&user_root, &outgoing).map_err(Error::write(&user_root))?;
+    if let Err(error) = fs::rename(&incoming, &user_root) {
+        // Put the folder back rather than leave the slicer without one.
+        let _ = fs::rename(&outgoing, &user_root);
+        return Err(Error::write(&user_root)(error));
+    }
+    fs::remove_dir_all(&outgoing).map_err(Error::write(&outgoing))?;
+
+    // The tool's record goes back to what it was then. Older backups have no record;
+    // for those the present one stays, and profiles whose files are gone show as missing.
+    if let Some(note) = backup_note(&chosen.path) {
+        let mut manifest = Manifest::load(dirs)?;
+        manifest.profiles.retain(|p| p.slicer != slicer.kind.id());
+        manifest.profiles.extend(note.profiles);
+        manifest.save(dirs)?;
+    }
+    Ok(safety)
 }
 
 /// Writes one `<filament name>.bbsflmt` per filament into `out_dir`, for
@@ -664,6 +887,68 @@ mod tests {
 
         let removed = uninstall_checked(&slicer, &dirs, "test/PLA/test", false).unwrap();
         assert_eq!(removed.cloud_synced, vec!["Test PLA @Bambu Lab X2D 0.4 nozzle".to_string()]);
+    }
+
+    #[test]
+    fn remove_many_takes_added_and_own_profiles_behind_one_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        let slicer = fixture_slicer(temp.path());
+        let dirs = AppDirs::under(&temp.path().join("app"));
+        let conf = slicer.conf().unwrap();
+        let item = planned(&slicer, &conf, "Test PLA");
+        install_checked(&slicer, &conf, &dirs, &[item], CONFIRMED, false).unwrap();
+        let before = snapshot(&slicer.user_root());
+        let backups_before = backups(&slicer, &dirs).unwrap().len();
+        let added = "Test PLA @Bambu Lab X2D 0.4 nozzle".to_string();
+        let own = "eSUN PLA Plus @Bambu Lab X2D 0.4 nozzle".to_string();
+        let both = [added.clone(), own.clone()];
+
+        // Not while the slicer runs, and not when one of the names is an imported profile.
+        assert!(matches!(remove_many_checked(&slicer, &conf, &dirs, &both, true), Err(Error::SlicerRunning(_))));
+        let with_imported = [own.clone(), "X2D  eSUN PLA+ Filament".to_string()];
+        assert!(remove_many_checked(&slicer, &conf, &dirs, &with_imported, false).is_err());
+        assert_eq!(snapshot(&slicer.user_root()), before);
+        assert_eq!(backups(&slicer, &dirs).unwrap().len(), backups_before);
+
+        let report = remove_many_checked(&slicer, &conf, &dirs, &both, false).unwrap();
+        assert_eq!(report.removed.len(), 4);
+        assert_eq!(backups(&slicer, &dirs).unwrap().len(), backups_before + 1);
+        assert!(Manifest::load(&dirs).unwrap().profiles.is_empty());
+        let after = snapshot(&slicer.user_root());
+        assert_eq!(after.len(), before.len() - 4);
+        assert!(after.iter().all(|entry| before.contains(entry)));
+    }
+
+    #[test]
+    fn restore_puts_back_the_files_and_the_record_and_can_be_undone() {
+        let temp = tempfile::tempdir().unwrap();
+        let slicer = fixture_slicer(temp.path());
+        let dirs = AppDirs::under(&temp.path().join("app"));
+        let conf = slicer.conf().unwrap();
+        let item = planned(&slicer, &conf, "Test PLA");
+        install_checked(&slicer, &conf, &dirs, &[item], CONFIRMED, false).unwrap();
+        let full = snapshot(&slicer.user_root());
+        let names = ["Test PLA @Bambu Lab X2D 0.4 nozzle".to_string(), "eSUN PLA Plus @Bambu Lab X2D 0.4 nozzle".to_string()];
+        let removed = remove_many_checked(&slicer, &conf, &dirs, &names, false).unwrap();
+        let emptied = snapshot(&slicer.user_root());
+        let backup = removed.backup.unwrap();
+
+        let listed = backups(&slicer, &dirs).unwrap();
+        assert_eq!(listed[0].path, backup);
+        assert_eq!(listed[0].note, "Before removing 2 profiles");
+
+        assert!(matches!(restore_checked(&slicer, &dirs, &backup, true), Err(Error::SlicerRunning(_))));
+        assert!(restore_checked(&slicer, &dirs, &temp.path().join("elsewhere.zip"), false).is_err());
+        assert_eq!(snapshot(&slicer.user_root()), emptied);
+
+        let safety = restore_checked(&slicer, &dirs, &backup, false).unwrap();
+        assert_eq!(snapshot(&slicer.user_root()), full);
+        assert_eq!(Manifest::load(&dirs).unwrap().profiles.len(), 1);
+
+        // Restoring the backup it made on the way undoes the restore.
+        restore_checked(&slicer, &dirs, &safety, false).unwrap();
+        assert_eq!(snapshot(&slicer.user_root()), emptied);
+        assert!(Manifest::load(&dirs).unwrap().profiles.is_empty());
     }
 
     #[test]

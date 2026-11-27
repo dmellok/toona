@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowCircleUp, CheckCircle, CloudArrowUp, GithubLogo, Warning } from "@phosphor-icons/react";
-import { api, type Card, type Prefs, type Shared, type Update, type User } from "./api";
+import { api, type Backup, type Card, type Prefs, type Shared, type Update, type User } from "./api";
 import { Tree, versionNodes } from "./Tree";
 import { swatchStyle } from "./colour";
 
@@ -9,17 +9,20 @@ export type Sheet =
   | { kind: "sync"; confirm: (dontAsk: boolean) => void }
   | { kind: "added"; alias: string; colourName: string; hex: string | null; backup: string | null }
   | { kind: "fixed"; names: string[] }
-  | { kind: "confirm-remove"; label: string; confirm: () => void }
-  | { kind: "removed"; label: string; stillInCloud: boolean }
+  | { kind: "confirm-remove"; label: string; own?: boolean; synced?: boolean; confirm: () => void }
+  | { kind: "removed"; label: string; stillInCloud: boolean; undo?: (() => void) | null }
+  | { kind: "backups"; backups: Backup[]; restore: (backup: Backup) => void }
+  | { kind: "confirm-restore"; backup: Backup; confirm: () => void }
+  | { kind: "restored"; undo: () => void }
   | { kind: "exported"; files: string[] }
   | { kind: "sign-in"; code: string; cancel: () => void }
   | { kind: "account"; user: User; signOut: () => void }
   | { kind: "share"; label: string; changes: number; isEdit: boolean; confirm: (note: string) => void }
   | { kind: "shared"; label: string }
-  | { kind: "link"; label: string; items: Card[]; current: string | null; pick: (key: string | null) => void }
+  | { kind: "link"; label: string; items: Card[]; likely: Card[]; current: string | null; pick: (key: string | null) => void }
   | { kind: "tree"; versions: Shared[]; current: number }
   | { kind: "saved"; label: string; changes: number; backup: string | null }
-  | { kind: "prefs"; first: boolean; prefs: Prefs; save: (updates: boolean, usage: boolean) => void; check: (() => void) | null }
+  | { kind: "prefs"; first: boolean; prefs: Prefs; save: (updates: boolean, usage: boolean) => void; check: (() => void) | null; backups: (() => void) | null }
   | { kind: "update"; update: Update; install: () => void }
   | { kind: "updating"; version: string }
   | { kind: "current"; version: string }
@@ -29,6 +32,17 @@ interface Props {
   sheet: Sheet | null;
   studioName: string;
   close: () => void;
+}
+
+/** A time as people say it, such as "28 Nov, 09:15". */
+function when(taken: string): string {
+  const date = new Date(taken);
+  if (Number.isNaN(date.getTime())) return "at an unknown time";
+  return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function size(bytes: number): string {
+  return bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
 export function Sheets({ sheet, studioName, close }: Props) {
@@ -182,16 +196,29 @@ export function Sheets({ sheet, studioName, close }: Props) {
     case "confirm-remove":
       body = (
         <>
-          <h2 id="sheet-title">Remove from {studioName}?</h2>
-          <p>
-            <strong>{sheet.label}</strong> will be taken out of {studioName}'s folder. A backup is made first.
-          </p>
+          <h2 id="sheet-title">{sheet.own ? "Delete" : "Remove"} from {studioName}?</h2>
+          {sheet.own ? (
+            <p>
+              <strong>{sheet.label}</strong> will be deleted from {studioName}'s folder. That includes what you made
+              in {studioName} yourself, which Toona has no other copy of. A backup is made first, so it can be undone.
+            </p>
+          ) : (
+            <p>
+              <strong>{sheet.label}</strong> will be taken out of {studioName}'s folder. A backup is made first.
+            </p>
+          )}
+          {sheet.synced && (
+            <p>
+              Your Bambu account holds a copy, so {studioName}'s next sync will bring it back. To be rid of it for
+              good, delete it inside {studioName} instead.
+            </p>
+          )}
           <div className="sheet-buttons">
             <button type="button" autoFocus onClick={close}>
               Cancel
             </button>
             <button type="button" className="go" onClick={sheet.confirm}>
-              Remove
+              {sheet.own ? "Delete" : "Remove"}
             </button>
           </div>
         </>
@@ -203,15 +230,20 @@ export function Sheets({ sheet, studioName, close }: Props) {
         <>
           <h2 id="sheet-title">Removed</h2>
           <p>
-            <strong>{sheet.label}</strong> is no longer in {studioName}'s folder.
+            <strong>{sheet.label}</strong>: taken out of {studioName}'s folder.
           </p>
           {sheet.stillInCloud && (
             <p>
-              Your Bambu account still holds a copy, so {studioName} will bring it back at its next sync. To remove
-              it for good, delete it inside {studioName}.
+              Your Bambu account still holds a copy, so {studioName}'s next sync will bring it back. To be rid of it
+              for good, delete it inside {studioName}.
             </p>
           )}
           <div className="sheet-buttons">
+            {sheet.undo && (
+              <button type="button" onClick={sheet.undo}>
+                Undo
+              </button>
+            )}
             <button type="button" className="go" autoFocus onClick={close}>
               Done
             </button>
@@ -320,18 +352,98 @@ export function Sheets({ sheet, studioName, close }: Props) {
       );
       break;
 
-    case "link": {
-      const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-      const matches = sheet.items
-        .filter((item) => {
-          const text = `${item.brand} ${item.name} ${item.material}`.toLowerCase();
-          return words.every((word) => text.includes(word));
-        })
-        .slice(0, 40);
+    case "backups":
+      className = "sheet roomy";
       body = (
         <>
-          <h2 id="sheet-title">Which product is {sheet.label}?</h2>
-          <p>Toona compares it with the preset it would use for that product, to show what you changed.</p>
+          <h2 id="sheet-title">Backups</h2>
+          <p>
+            Before Toona changes anything, it copies {studioName}'s whole user folder. Restoring one puts every
+            profile back as it was then, yours included. How things are now is backed up first, so a restore can be
+            undone too.
+          </p>
+          <ul className="backup-list">
+            {sheet.backups.map((backup) => (
+              <li key={backup.path}>
+                <span>
+                  <strong>{backup.note || "Backup"}</strong>
+                  <span className="muted">
+                    {when(backup.taken)} · {size(backup.bytes)}
+                  </span>
+                </span>
+                <button type="button" className="pill-button outline" onClick={() => sheet.restore(backup)}>
+                  Restore
+                </button>
+              </li>
+            ))}
+            {sheet.backups.length === 0 && <li className="muted">No backups yet. One is made the first time Toona changes something.</li>}
+          </ul>
+          <div className="sheet-buttons">
+            <button type="button" className="go" autoFocus onClick={close}>
+              Done
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "confirm-restore":
+      body = (
+        <>
+          <h2 id="sheet-title">Restore this backup?</h2>
+          <p>
+            {studioName}'s profiles go back to how they were <strong>{when(sheet.backup.taken)}</strong>
+            {sheet.backup.note ? `, ${sheet.backup.note.charAt(0).toLowerCase()}${sheet.backup.note.slice(1)}` : ""}.
+            Anything added or changed since then, in Toona or in {studioName}, is undone.
+          </p>
+          <p>How things are now is backed up first. If {studioName} syncs with your Bambu account, the next sync may change some profiles again.</p>
+          <div className="sheet-buttons">
+            <button type="button" autoFocus onClick={close}>
+              Cancel
+            </button>
+            <button type="button" className="go" onClick={sheet.confirm}>
+              Restore
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "restored":
+      body = (
+        <>
+          <h2 id="sheet-title">Restored</h2>
+          <p>{studioName}'s profiles are back as they were in that backup.</p>
+          <div className="sheet-buttons">
+            <button type="button" onClick={sheet.undo}>
+              Undo
+            </button>
+            <button type="button" className="go" autoFocus onClick={close}>
+              Done
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "link": {
+      const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+      // Before anything is typed, the products the name suggests come first.
+      const likely = words.length ? [] : sheet.likely;
+      const matches = [
+        ...likely,
+        ...sheet.items.filter((item) => {
+          const text = `${item.brand} ${item.name} ${item.material}`.toLowerCase();
+          return !likely.includes(item) && words.every((word) => text.includes(word));
+        }),
+      ].slice(0, 40);
+      body = (
+        <>
+          <h2 id="sheet-title">Link {sheet.label} to a product</h2>
+          <p>
+            Pick the filament this really is. Toona then compares yours with the settings it would use for that
+            product, so you can see what you tuned and share it. Your filament is not changed.
+          </p>
           <input
             className="link-search"
             type="search"
@@ -348,6 +460,7 @@ export function Sheets({ sheet, studioName, close }: Props) {
                   <span>
                     {item.brand} {item.name}
                   </span>
+                  {likely.includes(item) && <span className="likely">Likely</span>}
                   <span className="mono">{item.material}</span>
                 </button>
               </li>
@@ -357,7 +470,7 @@ export function Sheets({ sheet, studioName, close }: Props) {
           <div className="sheet-buttons">
             {sheet.current && (
               <button type="button" onClick={() => sheet.pick(null)}>
-                Clear
+                Unlink
               </button>
             )}
             <button type="button" onClick={close}>
@@ -447,11 +560,18 @@ export function Sheets({ sheet, studioName, close }: Props) {
           {!sheet.first && (
             <div className="about">
               <span className="mono">Toona {sheet.prefs.version}</span>
-              {sheet.check && (
-                <button type="button" className="pill-button outline" onClick={sheet.check}>
-                  Check now
-                </button>
-              )}
+              <span className="about-buttons">
+                {sheet.backups && (
+                  <button type="button" className="pill-button outline" onClick={sheet.backups}>
+                    Backups
+                  </button>
+                )}
+                {sheet.check && (
+                  <button type="button" className="pill-button outline" onClick={sheet.check}>
+                    Check now
+                  </button>
+                )}
+              </span>
             </div>
           )}
           <div className="sheet-buttons">

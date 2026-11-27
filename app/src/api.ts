@@ -146,8 +146,15 @@ export interface Added {
   profile_name: string;
   alias: string;
   catalogue_key: string;
+  /** Who makes it, when the catalogue or the profile says. */
+  brand?: string | null;
   printer: string;
   hex: string | null;
+  /** The material, such as PETG, and the numbers people look a profile up for. */
+  material?: string | null;
+  nozzle_temp?: string | null;
+  bed_temp?: string | null;
+  max_flow?: string | null;
   synced: boolean;
   present: boolean;
   parent: string | null;
@@ -160,8 +167,15 @@ export interface Added {
 export interface Own {
   profile_name: string;
   alias: string;
+  /** Who makes it, when the linked product or the profile says. */
+  brand?: string | null;
   printer: string;
   hex: string | null;
+  /** The material, such as PETG, and the numbers people look a profile up for. */
+  material?: string | null;
+  nozzle_temp?: string | null;
+  bed_temp?: string | null;
+  max_flow?: string | null;
   synced: boolean;
   catalogue_key: string | null;
   product: string | null;
@@ -226,6 +240,16 @@ export interface RemoveResult {
   removed: number;
   backup: string | null;
   cloud_synced: string[];
+}
+
+/** A backup Toona made of the slicer's folder before changing it. */
+export interface Backup {
+  path: string;
+  /** UTC, RFC 3339. */
+  taken: string;
+  /** What Toona was about to do; empty for older backups. */
+  note: string;
+  bytes: number;
 }
 
 export interface BarcodeMatch {
@@ -371,6 +395,14 @@ const mockOwn: Own = {
   profile_name: "eSUN PLA Plus @Bambu Lab X2D 0.4 nozzle", alias: "eSUN PLA Plus", printer: "Bambu Lab X2D 0.4 nozzle",
   hex: "#F26B21", synced: true, catalogue_key: null, product: null, parent: null, changes: [], linked: false,
 };
+const mockBackups: Backup[] = [
+  { path: "/backups/bambustudio-user-20261128T091500.000Z.zip", taken: "2026-11-28T09:15:00Z", note: "Before removing SUNLU PETG 2.0", bytes: 184_320 },
+  { path: "/backups/bambustudio-user-20261127T183000.000Z.zip", taken: "2026-11-27T18:30:00Z", note: "Before adding eSUN 3D PLA+ Orange", bytes: 181_248 },
+  { path: "/backups/bambustudio-user-20261120T101000.000Z.zip", taken: "2026-11-20T10:10:00Z", note: "", bytes: 176_128 },
+];
+
+/** Browser-only: the product each of the user's own filaments was linked to. */
+const mockLinks = new Map<string, string>();
 const T = { group: "Temperature", editable: true, min: 150, max: 350, step: 5, unit: "°" };
 const B = { ...T, min: 0, max: 130 };
 const mockProfile: Profile = {
@@ -448,13 +480,21 @@ export const api = {
     inApp ? invoke("install", { request }) : mockWrite(request.allow_cloud_sync, "install-dry"),
   exportBundle: (request: InstallRequest): Promise<string[]> =>
     inApp ? invoke("export_bundle", { request }) : Promise.resolve(["~/Downloads/Toona/example.bbsflmt"]),
-  inStudio: (): Promise<InStudio> =>
-    inApp ? invoke("in_studio") : mock<InStudio>("in_studio").then((data) => ({ ...data, own: data.own ?? [mockOwn] })),
+  inStudio: async (): Promise<InStudio> => {
+    if (inApp) return invoke("in_studio");
+    const [data, catalogue] = await Promise.all([mock<InStudio>("in_studio"), mock<CatalogueData>("catalogue")]);
+    const own = (data.own ?? [mockOwn]).map((row) => {
+      const item = catalogue.items.find((card) => card.key === mockLinks.get(row.profile_name));
+      return item
+        ? { ...row, catalogue_key: item.key, product: `${item.brand} ${item.name}`, parent: `Generic ${item.material}`, changes: mockShared[0].changes.map((c) => ({ ...c, layer: "you" as const })) }
+        : row;
+    });
+    return { ...data, own };
+  },
   linkProduct: async (profileName: string, key: string | null): Promise<void> => {
     if (inApp) return invoke("link_product", { profileName, key });
-    Object.assign(mockOwn, key
-      ? { catalogue_key: key, product: "eSUN PLA+", parent: "Generic PLA", changes: mockShared[0].changes.map((c) => ({ ...c, layer: "you" })) }
-      : { catalogue_key: null, product: null, parent: null, changes: [] });
+    if (key) mockLinks.set(profileName, key);
+    else mockLinks.delete(profileName);
   },
   profile: (profileName: string): Promise<Profile> =>
     inApp
@@ -483,6 +523,20 @@ export const api = {
     inApp
       ? invoke("remove", { profileName })
       : mockWrite(true, "in_studio").then(() => ({ removed: 2, backup: null, cloud_synced: [profileName] })),
+  /** Removes profiles by their full names behind one backup: Toona's, and ones made in the slicer. */
+  removeMany: (profileNames: string[]): Promise<RemoveResult> =>
+    inApp
+      ? invoke("remove_many", { profileNames })
+      : mockWrite(true, "in_studio").then(() => ({ removed: profileNames.length * 2, backup: mockBackups[0].path, cloud_synced: profileNames })),
+  backups: (): Promise<Backup[]> => (inApp ? invoke("backups") : Promise.resolve(mockBackups)),
+  /** Puts the slicer's folder back as it was in a backup; answers with the backup made of how it was. */
+  restoreBackup: (path: string): Promise<string> =>
+    inApp ? invoke("restore_backup", { path }) : mockWrite<unknown>(true, "in_studio").then(() => path),
+  /** Adds a filament Toona added to more printer presets, as a copy of the profile named. */
+  addNozzles: (profileName: string, printers: string[], borrowTuned: boolean, allowCloudSync: boolean): Promise<InstallResult> =>
+    inApp
+      ? invoke("add_nozzles", { profileName, printers, borrowTuned, allowCloudSync })
+      : mockWrite(allowCloudSync, "install-dry"),
   fixImported: (names: string[], allowCloudSync: boolean): Promise<InstallResult> =>
     inApp
       ? invoke("fix_imported", { names, allowCloudSync, dryRun: false })

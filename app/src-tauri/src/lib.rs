@@ -71,6 +71,32 @@ async fn remove(backend: Shared<'_>, profile_name: String) -> UiResult<api::Remo
 }
 
 #[tauri::command]
+async fn remove_many(backend: Shared<'_>, profile_names: Vec<String>) -> UiResult<api::RemoveDto> {
+    blocking(&backend, move |b| b.remove_many(&profile_names)).await
+}
+
+#[tauri::command]
+async fn backups(backend: Shared<'_>) -> UiResult<Vec<api::BackupDto>> {
+    blocking(&backend, |b| b.backups()).await
+}
+
+#[tauri::command]
+async fn restore_backup(backend: Shared<'_>, path: String) -> UiResult<String> {
+    blocking(&backend, move |b| b.restore_backup(&path)).await
+}
+
+#[tauri::command]
+async fn add_nozzles(
+    backend: Shared<'_>,
+    profile_name: String,
+    printers: Vec<String>,
+    borrow_tuned: bool,
+    allow_cloud_sync: bool,
+) -> UiResult<api::InstallDto> {
+    blocking(&backend, move |b| b.add_nozzles(&profile_name, &printers, borrow_tuned, allow_cloud_sync)).await
+}
+
+#[tauri::command]
 async fn fix_imported(
     backend: Shared<'_>,
     names: Vec<String>,
@@ -265,6 +291,10 @@ pub fn run() {
             export_bundle,
             in_studio,
             remove,
+            remove_many,
+            backups,
+            restore_backup,
+            add_nozzles,
             fix_imported,
             barcode,
             account,
