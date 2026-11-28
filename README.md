@@ -24,10 +24,10 @@ It is an early preview. [Download the latest build](https://github.com/dmellok/t
 | System | Download | State |
 | --- | --- | --- |
 | macOS, Apple silicon | `.dmg` | The one it is developed and tried on. Signed and notarised by Apple from 0.6.0, so it opens like any other app. |
-| Windows, 64-bit | `-setup.exe` | New and not yet tried on a real computer. Not code-signed, so Windows will warn before running it. |
+| Windows, 64-bit | `-setup.exe` | Tried with Bambu Studio. Not code-signed, so Windows will warn before running it. Offers its own updates from 0.6.0. |
 | Linux, 64-bit | `.AppImage` or `.deb` | New and not yet tried on a real computer. Also looks for a slicer installed as a Flatpak. |
 
-If you try the Windows or Linux build, an [issue](https://github.com/dmellok/toona/issues) saying how it went is very welcome.
+If you try the Linux build, an [issue](https://github.com/dmellok/toona/issues) saying how it went is very welcome.
 
 ## What it does
 
