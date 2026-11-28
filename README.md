@@ -23,7 +23,7 @@ It is an early preview. [Download the latest build](https://github.com/dmellok/t
 
 | System | Download | State |
 | --- | --- | --- |
-| macOS, Apple silicon | `.dmg` | The one it is developed and tried on. Not signed with an Apple developer certificate or notarised, so the first time: right-click the app, choose Open, then Open again. |
+| macOS, Apple silicon | `.dmg` | The one it is developed and tried on. Signed and notarised by Apple from 0.6.0, so it opens like any other app. |
 | Windows, 64-bit | `-setup.exe` | New and not yet tried on a real computer. Not code-signed, so Windows will warn before running it. |
 | Linux, 64-bit | `.AppImage` or `.deb` | New and not yet tried on a real computer. Also looks for a slicer installed as a Flatpak. |
 
