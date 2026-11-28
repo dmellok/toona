@@ -267,10 +267,19 @@ impl Slicer {
 
     pub fn system_library(&self) -> Result<SystemLibrary> {
         match self.kind.family() {
-            Family::Bambu if self.kind == SlicerKind::OrcaSlicer => SystemLibrary::load_orca(&self.config_dir.join("system")),
+            Family::Bambu if self.kind == SlicerKind::OrcaSlicer => {
+                SystemLibrary::load_orca(&self.config_dir.join("system"), Some(&self.user_machine_dir()))
+            }
             Family::Bambu => SystemLibrary::load(&self.system_vendor_dir()),
             Family::Prusa => SystemLibrary::load_prusa(&self.config_dir),
         }
+    }
+
+    /// Where the active account's own printer presets are: `user/<preset_folder>/machine`.
+    fn user_machine_dir(&self) -> PathBuf {
+        let folder = self.conf().map(|conf| conf.preset_folder).unwrap_or_default();
+        let folder = if folder.is_empty() { SIGNED_OUT_FOLDER.to_string() } else { folder };
+        self.user_root().join(folder).join("machine")
     }
 
     /// When the presets [`Slicer::system_library`] reads last changed, as far as that can
@@ -281,7 +290,13 @@ impl Slicer {
             // The user's own printer presets are part of what PrusaSlicer filaments are matched to.
             Family::Prusa => &["vendor", "printer"],
         };
-        folders.iter().filter_map(|folder| fs::metadata(self.config_dir.join(folder)).ok()?.modified().ok()).max()
+        let mut folders: Vec<PathBuf> = folders.iter().map(|folder| self.config_dir.join(folder)).collect();
+        if self.kind == SlicerKind::OrcaSlicer {
+            // And of what OrcaSlicer's are: a printer made with "Create Printer" is kept in `base`.
+            let machines = self.user_machine_dir();
+            folders.extend([machines.join("base"), machines]);
+        }
+        folders.iter().filter_map(|folder| fs::metadata(folder).ok()?.modified().ok()).max()
     }
 
     /// The folder the user's own presets live in, which is what gets backed up:

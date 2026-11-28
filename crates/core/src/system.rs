@@ -139,6 +139,9 @@ pub struct SystemLibrary {
     shown: Mutex<HashMap<String, Arc<Vec<String>>>>,
     /// OrcaSlicer: a filament that names no printers is offered to all of them.
     open_to_all: bool,
+    /// OrcaSlicer: for each printer the user made from a system one, that system printer.
+    /// It is offered the filaments made for its parent as well as its own.
+    parents: HashMap<String, String>,
 }
 
 impl SystemLibrary {
@@ -186,16 +189,20 @@ impl SystemLibrary {
         Ok(Self { version, filaments, machines, ..Self::default() })
     }
 
-    /// Loads every vendor in OrcaSlicer's `system` folder.
-    pub fn load_orca(system_dir: &Path) -> Result<Self> {
+    /// Loads every vendor in OrcaSlicer's `system` folder, and the printers the user made
+    /// themselves from `user_machine_dir` (`user/<account>/machine`) when it is given.
+    pub fn load_orca(system_dir: &Path, user_machine_dir: Option<&Path>) -> Result<Self> {
         let loaded = orca::load(system_dir)?;
-        Ok(Self {
-            version: loaded.version,
-            filaments: loaded.filaments,
-            machines: loaded.machines,
-            open_to_all: true,
-            ..Self::default()
-        })
+        let mut machines = loaded.machines;
+        let mut parents = HashMap::new();
+        for printer in user_machine_dir.map(|dir| orca::user_printers(dir, &machines)).unwrap_or_default() {
+            if let Some(parent) = printer.parent {
+                parents.insert(printer.machine.name.clone(), parent);
+            }
+            machines.push(printer.machine);
+        }
+        machines.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(Self { version: loaded.version, filaments: loaded.filaments, machines, open_to_all: true, parents, ..Self::default() })
     }
 
     /// The version a profile built on `filament` is stamped with: that of the vendor
@@ -288,6 +295,7 @@ impl SystemLibrary {
         if let Some(known) = shown.get(printer) {
             return known.clone();
         }
+        let parent = self.parents.get(printer).map(String::as_str);
         let mut names: Vec<(bool, &String)> = self
             .filaments
             .iter()
@@ -298,7 +306,9 @@ impl SystemLibrary {
                     Some(Value::String(one)) if !one.is_empty() => vec![one.as_str()],
                     _ => Vec::new(),
                 };
-                (listed.is_empty() || listed.contains(&printer)).then_some((listed.is_empty(), name))
+                // As OrcaSlicer has it: for every printer, for this one, or for the one it was made from.
+                let named = listed.contains(&printer) || parent.is_some_and(|parent| listed.contains(&parent));
+                (listed.is_empty() || named).then_some((listed.is_empty(), name))
             })
             .collect();
         names.sort();

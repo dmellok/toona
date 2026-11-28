@@ -140,6 +140,53 @@ pub(crate) fn load(system_dir: &Path) -> Result<Loaded> {
     Ok(Loaded { version, filaments, machines })
 }
 
+/// A printer preset the user made, with the name of the system preset it was made from
+/// when it still follows one.
+pub(crate) struct UserPrinter {
+    pub machine: MachinePreset,
+    pub parent: Option<String>,
+}
+
+/// The printers the user made themselves: the JSON presets in `machine_dir` and the folders
+/// in it. One made with "Create Printer" stands alone and says what it is; one saved as a
+/// change to a system printer names that printer and takes its model and nozzle from it.
+pub(crate) fn user_printers(machine_dir: &Path, system: &[MachinePreset]) -> Vec<UserPrinter> {
+    let mut found = Vec::new();
+    if !machine_dir.is_dir() {
+        return found;
+    }
+    for path in json_files(machine_dir).unwrap_or_default() {
+        // An unreadable file is the slicer's business; skip it rather than fail.
+        let Ok(preset) = read_object(&path) else { continue };
+        let text = |key: &str| preset.get(key).and_then(Value::as_str).filter(|value| !value.is_empty());
+        let Some(name) = text("name").map(str::to_string).or_else(|| path.file_stem().map(|stem| stem.to_string_lossy().into_owned())) else {
+            continue;
+        };
+        if system.iter().any(|machine| machine.name == name) {
+            continue;
+        }
+        let parent = text("inherits").and_then(|parent| system.iter().find(|machine| machine.name == parent));
+        let first_nozzle = match preset.get("nozzle_diameter") {
+            Some(Value::Array(sizes)) => sizes.first().and_then(Value::as_str),
+            Some(Value::String(size)) => size.split([',', ';']).next(),
+            _ => None,
+        };
+        let model = text("printer_model").map(str::to_string).or_else(|| parent.map(|machine| machine.model.clone()));
+        let nozzle = text("printer_variant")
+            .or(first_nozzle.filter(|size| !size.is_empty()))
+            .map(str::to_string)
+            .or_else(|| parent.map(|machine| machine.nozzle.clone()));
+        let (Some(model), Some(nozzle)) = (model, nozzle) else { continue };
+        found.push(UserPrinter {
+            machine: MachinePreset { name, model_id: model.clone(), model, nozzle, user: true },
+            parent: text("inherits").map(str::to_string),
+        });
+    }
+    found.sort_by(|a, b| a.machine.name.cmp(&b.machine.name));
+    found.dedup_by(|a, b| a.machine.name == b.machine.name);
+    found
+}
+
 fn selectable(preset: &Map<String, Value>) -> bool {
     preset.get("instantiation").and_then(Value::as_str) == Some("true")
 }
@@ -493,8 +540,8 @@ mod tests {
         // Processes: one, to be read past.
         body.u32(1).text("0.20mm Standard").text("process/a.json").u32(0);
         body.text("").texts(&[]).text("").text("true").text("").text("").texts(&[]);
-        // Filaments: a base and the one that can be chosen.
-        body.u32(2);
+        // Filaments: a base, one for the printer, and one that names no printer.
+        body.u32(3);
         body.text("fdm_filament_pla").text("filament/fdm_filament_pla.json").u32(2);
         body.u16(0).u64(1).u32(220);
         body.u16(1).texts(&["PLA"]);
@@ -503,6 +550,9 @@ mod tests {
         body.u16(2).u32(2).u16(1).u16(0).u32(7);
         body.u16(5).texts(&["Test Printer 0.4 nozzle"]);
         body.text("fdm_filament_pla").texts(&[]).text("").text("true").text("GFSL99").text("").texts(&[]);
+        body.text("Open PLA @System").text("filament/d.json").u32(1);
+        body.u16(5).texts(&[]);
+        body.text("fdm_filament_pla").texts(&[]).text("").text("true").text("").text("").texts(&[]);
         // Printers.
         body.u32(1).text("Test Printer 0.4 nozzle").text("machine/c.json").u32(2);
         body.u16(3).text("Test Printer");
@@ -535,6 +585,45 @@ mod tests {
         let base = &loaded.filaments["fdm_filament_pla\u{1}Test"];
         assert_eq!(base["nozzle_temperature"], serde_json::json!(["220"]));
         assert_eq!(base["filament_id"], "GFL99");
+    }
+
+    #[test]
+    fn printers_the_user_made_are_offered_what_orcaslicer_would_offer_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let system = dir.path().join("system");
+        let machines = dir.path().join("user/default/machine");
+        fs::create_dir_all(&system).unwrap();
+        fs::create_dir_all(machines.join("base")).unwrap();
+        fs::write(system.join("Test.opc"), packed("Test")).unwrap();
+        // Made with "Create Printer": it stands alone and says what it is.
+        fs::write(
+            machines.join("base/Anet A8 0.4 nozzle.json"),
+            r#"{ "name": "Anet A8 0.4 nozzle", "from": "User", "inherits": "", "printer_model": "Anet A8",
+                 "printer_variant": "0.4", "nozzle_diameter": ["0.4"], "gcode_flavor": "klipper" }"#,
+        )
+        .unwrap();
+        // A system printer saved with a change: only the change and the printer it follows.
+        fs::write(
+            machines.join("Test Printer tuned.json"),
+            r#"{ "name": "Test Printer tuned", "from": "User", "inherits": "Test Printer 0.4 nozzle", "retraction_length": ["0.6"] }"#,
+        )
+        .unwrap();
+        fs::write(machines.join("notes.json"), "not a preset").unwrap();
+
+        let library = crate::system::SystemLibrary::load_orca(&system, Some(&machines)).unwrap();
+        let names: Vec<&str> = library.machines().iter().map(|machine| machine.name.as_str()).collect();
+        assert_eq!(names, ["Anet A8 0.4 nozzle", "Test Printer 0.4 nozzle", "Test Printer tuned"]);
+
+        let own = library.machine("Anet A8 0.4 nozzle").unwrap();
+        assert_eq!((own.model.as_str(), own.nozzle.as_str(), own.user), ("Anet A8", "0.4", true));
+        let tuned = library.machine("Test Printer tuned").unwrap();
+        assert_eq!((tuned.model.as_str(), tuned.nozzle.as_str(), tuned.user), ("Test Printer", "0.4", true));
+
+        // A printer of its own gets the filaments open to every printer.
+        assert_eq!(library.filaments_for_printer("Anet A8 0.4 nozzle"), ["Open PLA @System"]);
+        // One made from a system printer also gets that printer's, and those first.
+        assert_eq!(library.filaments_for_printer("Test Printer tuned"), ["Test PLA @Test Printer 0.4 nozzle", "Open PLA @System"]);
+        assert_eq!(library.filaments_for_printer("Test Printer 0.4 nozzle"), ["Test PLA @Test Printer 0.4 nozzle", "Open PLA @System"]);
     }
 
     #[test]

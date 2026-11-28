@@ -53,7 +53,7 @@ The In Studio view (In PrusaSlicer, when that is the slicer chosen) lists what T
 
 ## OrcaSlicer
 
-OrcaSlicer takes the same kind of profile as Bambu Studio, and Toona reads the built-in presets of every printer vendor OrcaSlicer has set up, not only Bambu Lab's. Where OrcaSlicer's own filament library already has a preset for a brand's filament, the profile is built on that one. It works with OrcaSlicer 2.5; printers you made yourself in OrcaSlicer are not offered yet, and syncing with Orca Cloud has not been tried.
+OrcaSlicer takes the same kind of profile as Bambu Studio, and Toona reads the built-in presets of every printer vendor OrcaSlicer has set up, not only Bambu Lab's. Where OrcaSlicer's own filament library already has a preset for a brand's filament, the profile is built on that one. It works with OrcaSlicer 2.5. Printers you made yourself in OrcaSlicer are listed too, from 0.6.1: one created from scratch gets the filaments in OrcaSlicer's shared library, and one made by changing a built-in printer also gets what that printer does. That part is new, so a report of how it went on your printer is welcome. Syncing with Orca Cloud has not been tried.
 
 ## PrusaSlicer
 

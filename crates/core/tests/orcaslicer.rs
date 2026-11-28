@@ -10,7 +10,7 @@ use toona_core::SystemLibrary;
 #[ignore = "needs OrcaSlicer on this computer"]
 fn the_installed_orcaslicers_own_presets_are_all_understood() {
     let shipped = PathBuf::from("/Applications/OrcaSlicer.app/Contents/Resources/profiles");
-    let library = SystemLibrary::load_orca(&shipped).expect("every shipped vendor reads");
+    let library = SystemLibrary::load_orca(&shipped, None).expect("every shipped vendor reads");
     assert!(library.machines().len() > 500, "only {} printers", library.machines().len());
 
     let mut resolved = 0;
