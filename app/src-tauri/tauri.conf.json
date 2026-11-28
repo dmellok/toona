@@ -37,8 +37,17 @@
       "icons/icon.ico"
     ],
     "category": "Utility",
-    "shortDescription": "Add third-party filaments to Bambu Studio",
+    "shortDescription": "Add third-party filaments to Bambu Studio, OrcaSlicer and PrusaSlicer",
     "license": "AGPL-3.0-or-later",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "sidebarImage": "windows/installer-sidebar.bmp",
+        "headerImage": "windows/installer-header.bmp"
+      }
+    },
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "11.0"
