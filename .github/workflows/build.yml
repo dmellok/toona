@@ -2,7 +2,11 @@
 #
 # Runs for every version tag, on demand, and for branches named ci/... while the
 # build itself is being worked on. The packages are kept with the run; for a tag
-# they are also added to that version's GitHub release.
+# the Windows and Linux ones are also added to that version's GitHub release.
+#
+# The Mac package on a release is not this one. It is built on a maintainer's Mac with
+# tools/release-mac.sh, which signs it with a Developer ID and has Apple notarise it,
+# and is added to the release by hand. The Mac build here only shows that it builds.
 #
 # With the maintainers' signing key in the TAURI_SIGNING_PRIVATE_KEY secret, each
 # package also gets the signature the in-app updater checks. Without it the
@@ -103,7 +107,7 @@ jobs:
           if-no-files-found: error
 
       - name: Add to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os != 'macOS'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.ref_name }}" packages/* --clobber
