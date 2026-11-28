@@ -332,6 +332,8 @@ export interface Prefs {
   updates: boolean;
   usage: boolean;
   version: string;
+  /** Usage numbers are on from before they named products: the question is to be asked again. */
+  review?: boolean;
   /** Exactly what a usage hello sent now would contain. */
   report: Record<string, unknown>;
 }

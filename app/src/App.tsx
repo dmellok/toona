@@ -134,10 +134,11 @@ export default function App() {
       },
     });
 
-  const openPrefs = (current: Prefs, first: boolean) =>
+  const openPrefs = (current: Prefs, first: boolean, review = false) =>
     setSheet({
       kind: "prefs",
       first,
+      review,
       prefs: current,
       save: (updates, usage) => {
         api
@@ -171,8 +172,12 @@ export default function App() {
       .prefs()
       .then((current) => {
         setPrefs(current);
-        if (current.asked) background();
-        else openPrefs(current, true);
+        if (!current.asked) openPrefs(current, true);
+        else {
+          background();
+          // What usage numbers hold has changed since they said yes; ask again before sending the new part.
+          if (current.review) openPrefs(current, false, true);
+        }
       })
       .catch(() => undefined);
     // Runs once, when the window opens.

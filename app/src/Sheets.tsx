@@ -22,7 +22,7 @@ export type Sheet =
   | { kind: "link"; label: string; items: Card[]; likely: Card[]; current: string | null; pick: (key: string | null) => void }
   | { kind: "tree"; versions: Shared[]; current: number }
   | { kind: "saved"; label: string; changes: number; backup: string | null }
-  | { kind: "prefs"; first: boolean; prefs: Prefs; save: (updates: boolean, usage: boolean) => void; check: (() => void) | null; backups: (() => void) | null }
+  | { kind: "prefs"; first: boolean; review?: boolean; prefs: Prefs; save: (updates: boolean, usage: boolean) => void; check: (() => void) | null; backups: (() => void) | null }
   | { kind: "update"; update: Update; install: () => void }
   | { kind: "updating"; version: string }
   | { kind: "current"; version: string }
@@ -537,8 +537,16 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
       className = "sheet roomy";
       body = (
         <>
-          <h2 id="sheet-title">{sheet.first ? "Two choices before you start" : "Settings"}</h2>
+          <h2 id="sheet-title">{sheet.first ? "Two choices before you start" : sheet.review ? "A small ask" : "Settings"}</h2>
           {sheet.first && <p>Toona works the same whichever you pick, and you can change both later under Settings.</p>}
+          {sheet.review && (
+            <p>
+              Thanks for sharing usage numbers. It really does help. Would you let them include which catalogue
+              filaments you add as well? Knowing which brands people use shows where to put the work, and it is what
+              lets Toona ask those makers for better settings. It is your call: nothing new is sent unless you save
+              with the switch on.
+            </p>
+          )}
           <button type="button" className="setting switch" role="switch" aria-checked={updates} onClick={() => setUpdates(!updates)}>
             <span>
               <strong>Check for updates</strong>
@@ -555,8 +563,9 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
             <span>
               <strong>Share usage numbers</strong>
               <span>
-                Once a day, tell Toona's makers which version, system, slicer and printer models are in use, and how
-                many filaments were added. No account, no id, and never which filaments or anything in your files.
+                A free way to support the project. Once a day, Toona says which version, system, slicer and printer
+                models are in use, and which catalogue filaments you added, so the work goes where people need it.
+                No account, no id, and never the names of filaments you made yourself or anything in your files.
               </span>
             </span>
             <span className="switch-track" aria-hidden>
@@ -568,7 +577,9 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
             <pre className="selectable">{JSON.stringify(sheet.prefs.report, null, 2)}</pre>
             <p>
               "first", "new_week" and "new_month" say whether this is the first time this copy checked in at all, this
-              week and this month. That is how installs are counted without giving each one an id.
+              week and this month. That is how installs are counted without giving each one an id. "products" lists
+              what was added since the last check-in; each is sent once, and the server only keeps a count per
+              product.
             </p>
           </details>
           {!sheet.first && (

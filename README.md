@@ -58,7 +58,7 @@ With both slicers installed, a menu in the header switches between them. PrusaSl
 Toona talks to two places: GitHub, to download the catalogue, and `api.toona.wiki`, for shared profiles and update checks. On first run it asks two questions:
 
 - **Check for updates** (on unless you turn it off): when Toona opens it asks whether a newer version exists. The request carries the Toona version and the kind of computer.
-- **Share usage numbers** (off unless you turn it on): once a day, the Toona version, system, slicer, printer models and how many filaments were added. There is no id and no account; the first-run sheet shows exactly what would be sent.
+- **Share usage numbers** (off unless you turn it on): once a day, the Toona version, system, slicer, printer models, how many filaments were added, and which catalogue products were added since the last time. There is no id and no account, the server keeps only a count per product, and the names of filaments you made yourself are never sent. The first-run sheet shows exactly what would be sent.
 
 ## Layout
 

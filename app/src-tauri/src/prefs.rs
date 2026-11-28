@@ -4,6 +4,10 @@
 //! Nothing here runs until they have answered the first-run question. The hello carries
 //! no id: the app remembers the day it last said hello and tells the server whether
 //! this is its first of the week or month, so installs can be counted but not told apart.
+//!
+//! A hello also names the catalogue products added since the last one, each told once.
+//! People who turned usage numbers on when the question promised "never which filaments"
+//! keep sending the hello without them until they have seen the new wording and saved it.
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,6 +18,11 @@ use serde_json::{json, Value};
 use crate::api::{Backend, UiError};
 
 type UiResult<T> = Result<T, UiError>;
+
+/// The wording of the usage question this version asks. 2 added which products were added.
+const USAGE_TERMS: u32 = 2;
+/// The most products one hello names.
+const MAX_PRODUCTS: usize = 100;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Stored {
@@ -27,6 +36,12 @@ struct Stored {
     /// Days since 1970 of the last hello that reached the server.
     #[serde(default)]
     last_hello: Option<i64>,
+    /// The [`USAGE_TERMS`] the person last answered. 0 for answers from before it was kept.
+    #[serde(default)]
+    usage_terms: u32,
+    /// When the newest product a hello has named was added, as the manifest writes times.
+    #[serde(default)]
+    reported_until: Option<String>,
     /// The slicer chosen in the window, as its id. Unset until one is chosen.
     #[serde(default)]
     slicer: Option<String>,
@@ -38,7 +53,10 @@ pub struct PrefsDto {
     pub updates: bool,
     pub usage: bool,
     pub version: &'static str,
-    /// Exactly what a hello sent now would contain.
+    /// Usage numbers are on, but were agreed to before they named products: the question
+    /// is to be shown again, and until it is answered a hello leaves products out.
+    pub review: bool,
+    /// Exactly what a hello sent now would contain, once the question as it now reads is agreed to.
     pub report: Value,
 }
 
@@ -92,13 +110,20 @@ impl Backend {
             .map_err(|error| UiError { kind: "other", message: format!("Could not save the setting: {error}") })
     }
 
-    fn report(&self, stored: &Stored, day: i64) -> Value {
+    /// A hello, and when the newest product it names was added.
+    fn report(&self, stored: &Stored, day: i64, with_products: bool) -> (Value, Option<String>) {
+        let (mut products, latest) = match with_products {
+            true => self.products_added_since(stored.reported_until.as_deref()),
+            false => (Vec::new(), None),
+        };
+        products.truncate(MAX_PRODUCTS);
+        let products: Vec<Value> = products.into_iter().map(|(key, slicer)| json!({ "key": key, "slicer": slicer })).collect();
         let status = self.status();
         let mut printers: Vec<String> = status.printers.iter().map(|p| p.model.clone()).collect();
         printers.sort();
         printers.dedup();
         let last = stored.last_hello;
-        json!({
+        let hello = json!({
             "version": env!("CARGO_PKG_VERSION"),
             "os": std::env::consts::OS,
             "os_version": os_version(),
@@ -106,10 +131,12 @@ impl Backend {
             "slicer": if status.found { status.slicer } else { "" },
             "printers": printers,
             "added": self.added_count(),
+            "products": products,
             "first": last.is_none(),
             "new_week": last.is_none_or(|last| week(last) != week(day)),
             "new_month": last.is_none_or(|last| month(last) != month(day)),
-        })
+        });
+        (hello, latest)
     }
 
     /// The slicer the person chose to work with, if they chose one.
@@ -130,7 +157,8 @@ impl Backend {
             updates: stored.updates,
             usage: stored.usage,
             version: env!("CARGO_PKG_VERSION"),
-            report: self.report(&stored, today()),
+            review: stored.asked && stored.usage && stored.usage_terms < USAGE_TERMS,
+            report: self.report(&stored, today(), true).0,
         }
     }
 
@@ -139,6 +167,7 @@ impl Backend {
         stored.asked = true;
         stored.updates = updates;
         stored.usage = usage;
+        stored.usage_terms = USAGE_TERMS;
         self.store(&stored)?;
         Ok(self.prefs())
     }
@@ -156,7 +185,12 @@ impl Backend {
         if !stored.asked || !stored.usage || stored.last_hello == Some(day) {
             return Ok(false);
         }
-        self.server().hello(self.report(&stored, day))?;
+        let (hello, latest) = self.report(&stored, day, stored.usage_terms >= USAGE_TERMS);
+        self.server().hello(hello)?;
+        // Each product is told once: the next hello starts after the newest one in this.
+        if latest.is_some() {
+            stored.reported_until = latest;
+        }
         stored.last_hello = Some(day);
         self.store(&stored)?;
         Ok(true)
@@ -166,6 +200,58 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hello_names_new_products_once_and_only_after_the_new_question_is_answered() {
+        let temp = tempfile::tempdir().unwrap();
+        let dirs = toona_core::AppDirs::under(temp.path());
+        let profile = |key: &str, name: &str, slicer: &str, at: &str| {
+            json!({ "catalogue_key": key, "alias": name, "profile_name": name, "filament_id": "", "printer": "P",
+                    "slicer": slicer, "files": [], "installed_at": at })
+        };
+        let write = |profiles: Vec<Value>| {
+            std::fs::create_dir_all(&dirs.data_dir).unwrap();
+            std::fs::write(dirs.manifest_path(), json!({ "schema": 1, "profiles": profiles }).to_string()).unwrap();
+        };
+        let mut added = vec![
+            profile("esun/PLA/pla_plus", "A @0.4", "bambu-studio", "2026-11-01T10:00:00Z"),
+            profile("esun/PLA/pla_plus", "A @0.6", "bambu-studio", "2026-11-01T10:00:00Z"),
+            profile("esun/PLA/pla_plus", "A", "prusa-slicer", "2026-11-02T10:00:00Z"),
+            // A copy of the user's own imported profile: its key holds their name for it.
+            profile("converted/My secret blend", "B", "bambu-studio", "2026-11-03T10:00:00Z"),
+        ];
+        write(added.clone());
+        let backend = Backend::new(dirs.clone());
+
+        // Someone who said yes when the question promised "never which filaments".
+        backend.store(&Stored { asked: true, usage: true, ..Stored::default() }).unwrap();
+        assert!(backend.prefs().review);
+        let (hello, latest) = backend.report(&backend.stored(), 20_785, false);
+        assert_eq!(hello["products"], json!([]));
+        assert!(latest.is_none());
+        assert_eq!(hello["added"], 4);
+
+        // Saving the question as it now reads agrees to it.
+        assert!(!backend.set_prefs(true, true).unwrap().review);
+        let (hello, latest) = backend.report(&backend.stored(), 20_785, true);
+        assert_eq!(
+            hello["products"],
+            json!([{ "key": "esun/PLA/pla_plus", "slicer": "Bambu Studio" }, { "key": "esun/PLA/pla_plus", "slicer": "PrusaSlicer" }])
+        );
+        assert_eq!(latest.as_deref(), Some("2026-11-02T10:00:00Z"));
+
+        // After a hello got through, only what was added since is named.
+        let mut stored = backend.stored();
+        stored.reported_until = latest;
+        backend.store(&stored).unwrap();
+        assert_eq!(backend.report(&backend.stored(), 20_786, true).0["products"], json!([]));
+        added.push(profile("polymaker/PLA/polylite_pla", "C", "prusa-slicer", "2026-11-05T09:00:00Z"));
+        write(added);
+        assert_eq!(
+            backend.report(&backend.stored(), 20_786, true).0["products"],
+            json!([{ "key": "polymaker/PLA/polylite_pla", "slicer": "PrusaSlicer" }])
+        );
+    }
 
     #[test]
     fn weeks_turn_over_on_monday() {

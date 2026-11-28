@@ -474,6 +474,30 @@ impl Backend {
         self.manifest().profiles.len()
     }
 
+    /// Catalogue products added after `since` (a time as the manifest writes it; everything
+    /// when `None`), each once per slicer, with the time the latest of them was added.
+    /// Copies made of the user's own imported profiles are left out: their keys carry the
+    /// user's own names for things.
+    pub(crate) fn products_added_since(&self, since: Option<&str>) -> (Vec<(String, &'static str)>, Option<String>) {
+        let mut products: Vec<(String, &'static str)> = Vec::new();
+        let mut latest: Option<String> = None;
+        for profile in self.manifest().profiles {
+            if profile.catalogue_key.starts_with("converted/") || since.is_some_and(|since| profile.installed_at.as_str() <= since) {
+                continue;
+            }
+            let Some(kind) = SlicerKind::from_id(&profile.slicer) else { continue };
+            let product = (profile.catalogue_key, kind.display_name());
+            if !products.contains(&product) {
+                products.push(product);
+            }
+            if latest.as_deref().is_none_or(|latest| profile.installed_at.as_str() > latest) {
+                latest = Some(profile.installed_at);
+            }
+        }
+        products.sort();
+        (products, latest)
+    }
+
     fn manifest(&self) -> Manifest {
         Manifest::load(&self.dirs).unwrap_or_default()
     }
