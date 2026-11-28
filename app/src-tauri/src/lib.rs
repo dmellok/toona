@@ -37,6 +37,24 @@ async fn set_slicer(backend: Shared<'_>, id: String) -> UiResult<api::Status> {
     blocking(&backend, move |b| b.set_slicer(&id)).await
 }
 
+/// Asks the person for a slicer's settings folder and works with it. `None` when they
+/// closed the picker without choosing.
+#[tauri::command]
+async fn choose_slicer_folder(app: tauri::AppHandle, backend: Shared<'_>, id: String) -> UiResult<Option<api::Status>> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(&backend, move |b| {
+        let picked = app.dialog().file().set_title("Choose the slicer's settings folder").blocking_pick_folder();
+        let Some(folder) = picked.and_then(|picked| picked.into_path().ok()) else { return Ok(None) };
+        b.set_slicer_folder(&id, &folder).map(Some)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn reset_slicer_folder(backend: Shared<'_>, id: String) -> UiResult<api::Status> {
+    blocking(&backend, move |b| b.reset_slicer_folder(&id)).await
+}
+
 #[tauri::command]
 async fn catalogue(backend: Shared<'_>, refresh: bool) -> UiResult<api::CatalogueDto> {
     blocking(&backend, move |b| b.catalogue(refresh)).await
@@ -302,11 +320,14 @@ pub fn run() {
     let backend = Arc::new(Backend::standard().expect("could not determine the home directory"));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(backend)
         .invoke_handler(tauri::generate_handler![
             status,
             set_slicer,
+            choose_slicer_folder,
+            reset_slicer_folder,
             catalogue,
             detail,
             install,

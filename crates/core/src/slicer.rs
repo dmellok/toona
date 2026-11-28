@@ -230,6 +230,23 @@ impl Slicer {
         Self::at(kind, flatpak).or(standard)
     }
 
+    /// The standard place [`Slicer::detect`] looks first, whether or not the slicer is there.
+    pub fn usual_place(kind: SlicerKind) -> Option<PathBuf> {
+        Some(directories::BaseDirs::new()?.config_dir().join(kind.folder_name()))
+    }
+
+    /// The config folder a person pointed at. They may have picked the folder itself, the
+    /// one above it, or one inside it such as `system` or `user`; each is tried in turn.
+    pub fn in_folder(kind: SlicerKind, picked: &Path) -> Result<Self> {
+        let named = picked.join(kind.folder_name());
+        let above = picked.parent().map(Path::to_path_buf);
+        [Some(picked.to_path_buf()), Some(named), above]
+            .into_iter()
+            .flatten()
+            .find_map(|folder| Self::at(kind, folder).ok())
+            .ok_or_else(|| Error::SlicerNotFound { slicer: kind.display_name(), path: picked.to_path_buf() })
+    }
+
     /// A slicer config folder at an explicit path.
     pub fn at(kind: SlicerKind, config_dir: impl Into<PathBuf>) -> Result<Self> {
         let config_dir = config_dir.into();
@@ -421,5 +438,37 @@ impl Slicer {
             let name = name.trim_end_matches(".exe");
             self.kind.process_names().iter().any(|known| name == *known || exe_stem == *known)
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_picked_folder_may_be_the_settings_folder_the_one_above_or_one_inside() {
+        let temp = tempfile::tempdir().unwrap();
+        let orca = temp.path().join("Portable").join("OrcaSlicer");
+        fs::create_dir_all(orca.join("system")).unwrap();
+        fs::create_dir_all(orca.join("user")).unwrap();
+        for picked in [orca.clone(), temp.path().join("Portable"), orca.join("system"), orca.join("user")] {
+            let found = Slicer::in_folder(SlicerKind::OrcaSlicer, &picked).unwrap();
+            assert_eq!(found.config_dir, orca, "picked {}", picked.display());
+        }
+
+        let prusa = temp.path().join("PrusaSlicer");
+        fs::create_dir_all(prusa.join("filament")).unwrap();
+        fs::write(prusa.join("PrusaSlicer.ini"), "").unwrap();
+        assert_eq!(Slicer::in_folder(SlicerKind::PrusaSlicer, &prusa.join("filament")).unwrap().config_dir, prusa);
+
+        // Somewhere with no slicer settings is refused, and names the folder that was picked.
+        let empty = temp.path().join("Documents");
+        fs::create_dir_all(&empty).unwrap();
+        match Slicer::in_folder(SlicerKind::OrcaSlicer, &empty) {
+            Err(Error::SlicerNotFound { path, .. }) => assert_eq!(path, empty),
+            other => panic!("expected the folder to be refused, got {other:?}"),
+        }
+        // One slicer's folder is not another's.
+        assert!(Slicer::in_folder(SlicerKind::PrusaSlicer, &orca).is_err());
     }
 }

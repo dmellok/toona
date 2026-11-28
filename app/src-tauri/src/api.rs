@@ -103,6 +103,10 @@ pub struct SlicerDto {
     pub name: &'static str,
     /// Its settings folder is on this computer.
     pub found: bool,
+    /// The settings folder in use, or where Toona looked when there is none.
+    pub folder: String,
+    /// The person pointed Toona at that folder; it is not the usual place.
+    pub chosen: bool,
 }
 
 #[derive(Serialize)]
@@ -402,7 +406,7 @@ impl Backend {
         // The slicer chosen last time; before any choice, the first one that is installed.
         let kind = backend
             .chosen_slicer()
-            .or_else(|| SLICERS.iter().copied().find(|kind| Slicer::detect(*kind).is_ok()))
+            .or_else(|| SLICERS.iter().copied().find(|kind| backend.locate(*kind).is_ok()))
             .unwrap_or(SLICERS[0]);
         backend.use_slicer(kind);
         backend
@@ -437,15 +441,52 @@ impl Backend {
         Ok(self.status())
     }
 
+    /// Works with the settings folder the person picked for a slicer, and switches to that
+    /// slicer. The folder is checked first, so a wrong pick changes nothing.
+    pub fn set_slicer_folder(&self, id: &str, picked: &std::path::Path) -> UiResult<Status> {
+        let kind = SlicerKind::from_id(id).ok_or_else(|| other(format!("Toona doesn't work with \"{id}\".")))?;
+        let slicer = Slicer::in_folder(kind, picked).map_err(|_| {
+            let marker = match kind.family() {
+                Family::Bambu => "a folder named \"system\"",
+                Family::Prusa => "a file named PrusaSlicer.ini",
+            };
+            other(format!(
+                "That doesn't look like {}'s settings folder: it should hold {marker}. In {}, Help, Show Configuration Folder opens the right one.",
+                kind.display_name(),
+                kind.display_name()
+            ))
+        })?;
+        self.remember_folder(kind, Some(slicer.config_dir))?;
+        self.remember_slicer(kind)?;
+        self.use_slicer(kind);
+        Ok(self.status())
+    }
+
+    /// Goes back to looking for a slicer in its usual place.
+    pub fn reset_slicer_folder(&self, id: &str) -> UiResult<Status> {
+        let kind = SlicerKind::from_id(id).ok_or_else(|| other(format!("Toona doesn't work with \"{id}\".")))?;
+        self.remember_folder(kind, None)?;
+        Ok(self.status())
+    }
+
+    /// A slicer's settings folder: the one the person chose while it is still there,
+    /// otherwise the usual place.
+    fn locate(&self, kind: SlicerKind) -> Result<Slicer, Error> {
+        if let (Some(folder), true) = (&self.folder, kind == self.kind()) {
+            return Slicer::at(kind, folder);
+        }
+        match self.chosen_folder(kind).map(|folder| Slicer::at(kind, folder)) {
+            Some(Ok(slicer)) => Ok(slicer),
+            _ => Slicer::detect(kind),
+        }
+    }
+
     pub fn standard() -> Result<Self, Error> {
         Ok(Self::new(AppDirs::standard()?))
     }
 
     fn studio(&self) -> Result<Studio, Error> {
-        let slicer = match &self.folder {
-            Some(folder) => Slicer::at(self.kind(), folder)?,
-            None => Slicer::detect(self.kind())?,
-        };
+        let slicer = self.locate(self.kind())?;
         let conf = slicer.conf()?;
         let stamp = slicer.library_stamp();
         let mut cached = self.library.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -519,7 +560,21 @@ impl Backend {
         let id = kind.id();
         let slicers: Vec<SlicerDto> = SLICERS
             .iter()
-            .map(|kind| SlicerDto { id: kind.id(), name: kind.display_name(), found: Slicer::detect(*kind).is_ok() })
+            .map(|kind| {
+                let located = self.locate(*kind);
+                let folder = match &located {
+                    Ok(slicer) => slicer.config_dir.clone(),
+                    Err(_) => Slicer::usual_place(*kind).unwrap_or_default(),
+                };
+                let chosen = located.is_ok() && self.chosen_folder(*kind).is_some_and(|chosen| chosen == folder);
+                SlicerDto {
+                    id: kind.id(),
+                    name: kind.display_name(),
+                    found: located.is_ok(),
+                    folder: folder.display().to_string(),
+                    chosen,
+                }
+            })
             .collect();
         match self.studio() {
             Ok(studio) => {

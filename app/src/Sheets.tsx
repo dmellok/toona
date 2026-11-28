@@ -26,6 +26,7 @@ export type Sheet =
   | { kind: "update"; update: Update; install: () => void }
   | { kind: "updating"; version: string }
   | { kind: "current"; version: string }
+  | { kind: "find-slicer"; name: string; folder: string; found: boolean; choose: () => void; reset: (() => void) | null }
   | { kind: "error"; message: string };
 
 interface Props {
@@ -138,10 +139,14 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
           <div>
             <CloudArrowUp size={32} aria-hidden />
           </div>
-          <h2 id="sheet-title">This syncs to your {account} account</h2>
+          <h2 id="sheet-title">{studioName} will sync this filament</h2>
           <p>
-            {studioName} uploads new filaments to {account === "Bambu" ? "Bambu Cloud" : account} the next time it opens, the same as ones you create
-            there. To remove one for good later, delete it in {studioName}.
+            Toona only saves the profile on this computer. It never signs in to your {account} account or sends
+            anything to it.
+          </p>
+          <p>
+            {studioName} itself uploads new filaments to {account === "Bambu" ? "Bambu Cloud" : account} the next time it opens, the same as ones you
+            create there. To remove one for good later, delete it in {studioName}.
           </p>
           <label className="check">
             <input type="checkbox" checked={dontAsk} onChange={(event) => setDontAsk(event.target.checked)} />
@@ -258,6 +263,40 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
             )}
             <button type="button" className="go" autoFocus onClick={close}>
               Done
+            </button>
+          </div>
+        </>
+      );
+      break;
+
+    case "find-slicer":
+      body = (
+        <>
+          <h2 id="sheet-title">{sheet.found ? `${sheet.name}'s settings folder` : `Where does ${sheet.name} keep its settings?`}</h2>
+          {sheet.found ? (
+            <p>Toona is working with the settings in this folder.</p>
+          ) : (
+            <p>
+              Toona looked in this folder and didn't find {sheet.name}'s settings. If it is installed, it keeps them
+              somewhere else, as a portable copy does.
+            </p>
+          )}
+          <div className="fine selectable">{sheet.folder}</div>
+          <p>
+            To find the right folder, open {sheet.name} and choose Help, Show Configuration Folder. Then choose that
+            folder here.
+          </p>
+          <div className="sheet-buttons">
+            {sheet.reset && (
+              <button type="button" onClick={sheet.reset}>
+                Use the usual place
+              </button>
+            )}
+            <button type="button" onClick={close}>
+              Cancel
+            </button>
+            <button type="button" className="go" autoFocus onClick={sheet.choose}>
+              Choose folder
             </button>
           </div>
         </>

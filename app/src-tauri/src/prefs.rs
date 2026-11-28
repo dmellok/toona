@@ -45,6 +45,10 @@ struct Stored {
     /// The slicer chosen in the window, as its id. Unset until one is chosen.
     #[serde(default)]
     slicer: Option<String>,
+    /// Settings folders the person pointed Toona at, by slicer id, for slicers that keep
+    /// theirs somewhere other than the usual place.
+    #[serde(default)]
+    folders: std::collections::BTreeMap<String, PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -150,6 +154,21 @@ impl Backend {
         self.store(&stored)
     }
 
+    /// The settings folder the person chose for a slicer, if they chose one.
+    pub(crate) fn chosen_folder(&self, kind: toona_core::SlicerKind) -> Option<PathBuf> {
+        self.stored().folders.remove(kind.id())
+    }
+
+    /// Remembers a slicer's settings folder, or with `None` goes back to the usual place.
+    pub(crate) fn remember_folder(&self, kind: toona_core::SlicerKind, folder: Option<PathBuf>) -> UiResult<()> {
+        let mut stored = self.stored();
+        match folder {
+            Some(folder) => stored.folders.insert(kind.id().to_string(), folder),
+            None => stored.folders.remove(kind.id()),
+        };
+        self.store(&stored)
+    }
+
     pub fn prefs(&self) -> PrefsDto {
         let stored = self.stored();
         PrefsDto {
@@ -200,6 +219,42 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slicer_that_keeps_its_settings_elsewhere_can_be_pointed_out() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = Backend::new(toona_core::AppDirs::under(&temp.path().join("toona")));
+        let orca = temp.path().join("Portable").join("OrcaSlicer");
+        std::fs::create_dir_all(orca.join("system")).unwrap();
+        std::fs::create_dir_all(orca.join("user")).unwrap();
+        let entry = |status: &crate::api::Status| {
+            let slicer = status.slicers.iter().find(|slicer| slicer.id == "orca-slicer").unwrap();
+            (slicer.found, slicer.folder.clone(), slicer.chosen)
+        };
+
+        // A folder with no slicer settings is refused and nothing is remembered.
+        let Err(wrong) = backend.set_slicer_folder("orca-slicer", temp.path()) else { panic!("a folder without settings was accepted") };
+        assert!(wrong.message.contains("Show Configuration Folder"), "{}", wrong.message);
+        assert!(!entry(&backend.status()).2);
+
+        // Picking a folder inside the right one still finds it, and switches to that slicer.
+        let Ok(status) = backend.set_slicer_folder("orca-slicer", &orca.join("user")) else { panic!("the folder was refused") };
+        assert_eq!(status.id, "orca-slicer");
+        assert_eq!(entry(&status), (true, orca.display().to_string(), true));
+
+        // The choice is kept for the next time Toona opens.
+        let again = Backend::new(toona_core::AppDirs::under(&temp.path().join("toona")));
+        assert_eq!(entry(&again.status()), (true, orca.display().to_string(), true));
+
+        // If the folder goes away, Toona looks in the usual place again without being told.
+        std::fs::remove_dir_all(&orca).unwrap();
+        assert!(!entry(&again.status()).2);
+        std::fs::create_dir_all(orca.join("system")).unwrap();
+        assert!(entry(&again.status()).2);
+
+        let Ok(reset) = again.reset_slicer_folder("orca-slicer") else { panic!("could not go back to the usual place") };
+        assert!(!entry(&reset).2);
+    }
 
     #[test]
     fn a_hello_names_new_products_once_and_only_after_the_new_question_is_answered() {

@@ -616,22 +616,55 @@ export default function App() {
   const items: Card[] = catalogue?.items ?? [];
   const studioName = status?.slicer ?? "Bambu Studio";
   const slicerId = status?.id ?? "bambu-studio";
-  // Offered only when there is a choice to make: more than one slicer on this computer.
-  const slicers = (status?.slicers ?? []).filter((slicer) => slicer.found || slicer.id === slicerId);
+  // Every slicer is offered, found or not: one Toona can't find can be pointed out by hand.
+  const slicers = status?.slicers ?? [];
   const addedCount = filamentCount(inStudio);
 
+  // Printers, what is added and every open page belong to the slicer that was left.
+  const adoptSlicer = (next: Status) => {
+    setStatus(next);
+    setModel(null);
+    setProfile(null);
+    loadCatalogue(false);
+    refreshInStudio();
+  };
+  const slicerFailed = (raw: unknown) => setSheet({ kind: "error", message: asUiError(raw).message });
+
   const switchSlicer = (id: string) => {
-    api
-      .setSlicer(id)
-      .then((next) => {
-        // Printers, what is added and every open page belong to the slicer that was left.
-        setStatus(next);
-        setModel(null);
-        setProfile(null);
-        loadCatalogue(false);
-        refreshInStudio();
-      })
-      .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+    api.setSlicer(id).then(adoptSlicer).catch(slicerFailed);
+  };
+
+  /** Shows where a slicer's settings are looked for, and lets the person choose the folder. */
+  const findSlicer = (id: string) => {
+    const slicer = slicers.find((each) => each.id === id);
+    if (!slicer) return;
+    setSheet({
+      kind: "find-slicer",
+      name: slicer.name,
+      folder: slicer.folder,
+      found: slicer.found,
+      choose: () => {
+        api
+          .chooseSlicerFolder(id)
+          .then((next) => {
+            if (!next) return;
+            setSheet(null);
+            adoptSlicer(next);
+          })
+          .catch(slicerFailed);
+      },
+      reset: slicer.chosen
+        ? () => {
+            api
+              .resetSlicerFolder(id)
+              .then((next) => {
+                setSheet(null);
+                adoptSlicer(next);
+              })
+              .catch(slicerFailed);
+          }
+        : null,
+    });
   };
 
   return (
@@ -655,10 +688,10 @@ export default function App() {
         <div className="spacer" />
 
         {status && !status.found && (
-          <div className="notice">
+          <button type="button" className="notice notice-action" onClick={() => findSlicer(slicerId)}>
             <Warning size={18} aria-hidden />
-            <span>{studioName} not found</span>
-          </div>
+            <span>{studioName} not found. Choose its folder</span>
+          </button>
         )}
         {status?.found && status.running && (
           <div className="notice">
@@ -674,16 +707,21 @@ export default function App() {
           </button>
         )}
 
-        {slicers.length > 1 && (
+        {slicers.length > 0 && (
           <div className="pill pill-select">
             <span>{studioName}</span>
             <CaretDown size={14} aria-hidden />
-            <select aria-label="Slicer" value={slicerId} onChange={(event) => switchSlicer(event.target.value)}>
+            <select
+              aria-label="Slicer"
+              value={slicerId}
+              onChange={(event) => (event.target.value === "folder" ? findSlicer(slicerId) : switchSlicer(event.target.value))}
+            >
               {slicers.map((slicer) => (
                 <option key={slicer.id} value={slicer.id}>
-                  {slicer.name}
+                  {slicer.found ? slicer.name : `${slicer.name} (not found)`}
                 </option>
               ))}
+              <option value="folder">Settings folder for {studioName}…</option>
             </select>
           </div>
         )}

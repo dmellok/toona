@@ -29,6 +29,8 @@ It is an early preview. [Download the latest build](https://github.com/dmellok/t
 
 If you try the Linux build, an [issue](https://github.com/dmellok/toona/issues) saying how it went is very welcome.
 
+Toona looks for each slicer's settings in the usual place for your system. If yours keeps them elsewhere, as a portable copy does, pick the slicer from the menu at the top and choose its settings folder (from 0.6.2). The slicer's own Help, Show Configuration Folder shows where it is.
+
 ## What it does
 
 - Browses the catalogue by brand, material and name, or by scanning a spool's barcode.

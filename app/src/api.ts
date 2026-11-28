@@ -18,6 +18,10 @@ export interface SlicerChoice {
   name: string;
   /** Its settings folder is on this computer. */
   found: boolean;
+  /** The settings folder in use, or where Toona looked when there is none. */
+  folder: string;
+  /** The person pointed Toona at that folder; it is not the usual place. */
+  chosen: boolean;
 }
 
 export interface Status {
@@ -489,6 +493,10 @@ export const api = {
   },
   /** Switches to another slicer; the answer is its status. */
   setSlicer: (id: string): Promise<Status> => (inApp ? invoke("set_slicer", { id }) : api.status()),
+  /** Asks for a slicer's settings folder and works with it. Null when no folder was chosen. */
+  chooseSlicerFolder: (id: string): Promise<Status | null> => (inApp ? invoke("choose_slicer_folder", { id }) : Promise.resolve(null)),
+  /** Goes back to looking for a slicer in its usual place. */
+  resetSlicerFolder: (id: string): Promise<Status> => (inApp ? invoke("reset_slicer_folder", { id }) : api.status()),
   catalogue: (refresh: boolean): Promise<CatalogueData> =>
     inApp ? invoke("catalogue", { refresh }) : mock("catalogue"),
   detail: (
