@@ -65,6 +65,8 @@ interface Props {
   data: InStudio | null;
   studioName: string;
   busy: boolean;
+  /** The header's Advanced switch: off shows each filament's essentials, on shows everything. */
+  advanced: boolean;
   /** The catalogue, for brands and for guessing which product a filament is. */
   items: Card[];
   printers: Printer[];
@@ -92,7 +94,12 @@ interface Props {
 }
 
 /** One profile in the slicer: a filament for one printer and nozzle. */
-type Entry = { model: string; nozzle: string } & ({ kind: "added"; row: Added } | { kind: "own"; row: Own });
+type Entry = {
+  model: string;
+  nozzle: string;
+  /** The product's material where the product is known; otherwise what the profile calls itself. */
+  material: string | null;
+} & ({ kind: "added"; row: Added } | { kind: "own"; row: Own });
 
 /** One filament as the slicer lists it, with the profile for each nozzle it has. */
 interface Tile {
@@ -131,7 +138,7 @@ export function filamentCount(data: InStudio | null): number {
   return new Set(rows.map((row) => row.alias)).size;
 }
 
-interface TileProps extends Pick<Props, "busy" | "sharedCounts" | "onRemove" | "onShare" | "onOpen" | "onLink" | "onLinkNow" | "onAddNozzles" | "onSeeShared"> {
+interface TileProps extends Pick<Props, "busy" | "advanced" | "sharedCounts" | "onRemove" | "onShare" | "onOpen" | "onLink" | "onLinkNow" | "onAddNozzles" | "onSeeShared"> {
   tile: Tile;
   showModel: boolean;
   /** Printer presets of this model the filament has no profile for yet. */
@@ -141,7 +148,7 @@ interface TileProps extends Pick<Props, "busy" | "sharedCounts" | "onRemove" | "
   onSelect: () => void;
 }
 
-function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, sharedCounts, onRemove, onShare, onOpen, onLink, onLinkNow, onAddNozzles, onSeeShared }: TileProps) {
+function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, advanced, sharedCounts, onRemove, onShare, onOpen, onLink, onLinkNow, onAddNozzles, onSeeShared }: TileProps) {
   const [picked, setPicked] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   // The numbers, changes and sharing are about one nozzle's profile; the rest is about the filament.
@@ -165,6 +172,7 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
     row.bed_temp && `${row.bed_temp}° bed`,
     row.max_flow && `${row.max_flow} mm³/s`,
   ].filter(Boolean);
+  const synced = tile.entries.every((e) => e.row.synced);
   const removal: Removal = {
     profileNames: names,
     label,
@@ -177,18 +185,25 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
       {selected !== null && (
         <input type="checkbox" className="tile-check" aria-label={`Select ${tile.alias}`} checked={selected} onChange={onSelect} />
       )}
-      <span className="tile-colour" style={dotStyle(hex)} aria-hidden />
+      {hex && <span className="tile-colour" style={dotStyle(hex)} aria-hidden />}
       <div className="text">
-        {canOpen ? (
-          <button type="button" className="title" title="Open its settings" onClick={() => onOpen(row.profile_name)}>
-            {tile.alias}
-          </button>
-        ) : (
-          <div className="title">{tile.alias}</div>
-        )}
-        {facts.length > 0 && <div className="tile-facts">{facts.join(" · ")}</div>}
+        <div className="title-line">
+          {canOpen ? (
+            <button type="button" className="title" title="Open its settings" onClick={() => onOpen(row.profile_name)}>
+              {tile.alias}
+            </button>
+          ) : (
+            <div className="title">{tile.alias}</div>
+          )}
+          {advanced && synced && (
+            <span className="tag-icon" title="Synced to your Bambu account">
+              <CloudCheck size={16} aria-label="Synced to your Bambu account" />
+            </span>
+          )}
+        </div>
+        {advanced && facts.length > 0 && <div className="tile-facts">{facts.join(" · ")}</div>}
         <div className="tags">
-          {row.material && <span className={`tag material ${materialTone(row.material)}`}>{row.material}</span>}
+          {entry.material && <span className={`tag material ${materialTone(entry.material)}`}>{entry.material}</span>}
           {showModel && <span className="tag">{shortModel(tile.model)}</span>}
           {tile.entries.map((e, index) =>
             several ? (
@@ -207,6 +222,7 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
             ),
           )}
           {selected === null &&
+            advanced &&
             missing.map((printer) => (
               <button
                 key={printer.name}
@@ -228,7 +244,7 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
               <span>{own.product}</span>
             </button>
           )}
-          {shared > 0 && isProduct(product) && (
+          {advanced && shared > 0 && isProduct(product) && (
             <button type="button" className="tag product" title="See what other people shared for this product" onClick={() => onSeeShared(product)}>
               <UsersThree size={14} aria-hidden />
               <span>{shared} shared</span>
@@ -240,18 +256,13 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
               {copies} copies
             </span>
           )}
-          {tile.entries.every((e) => e.row.synced) && (
-            <span className="tag-icon" title="Synced to your Bambu account">
-              <CloudCheck size={16} aria-label="Synced to your Bambu account" />
-            </span>
-          )}
           {!present && <span className="warn-text">files missing</span>}
         </div>
       </div>
 
       {selected === null && (
         <div className="tile-actions">
-          {row.parent && changes > 0 && (
+          {advanced && row.parent && changes > 0 && (
             <button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>
               <span>{changes === 1 ? "1 change" : `${changes} changes`}</span>
               <CaretDown size={14} aria-hidden />
@@ -263,7 +274,13 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
               <span>Link to product</span>
             </button>
           )}
-          {canShare && (
+          {tile.guess && (
+            <button type="button" className="secondary" disabled={busy} onClick={() => onLinkNow([{ profileNames: names, key: tile.guess!.key }])}>
+              <LinkSimple size={18} aria-hidden />
+              <span>Link</span>
+            </button>
+          )}
+          {advanced && canShare && (
             <button type="button" className="secondary icon" title="Share" aria-label={`Share ${tile.alias}`} disabled={busy} onClick={() => onShare(row)}>
               <ShareNetwork size={18} aria-hidden />
             </button>
@@ -286,17 +303,13 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, shar
           <span>
             Looks like <strong>{tile.guess.brand} {tile.guess.name}</strong>
           </span>
-          <button type="button" className="secondary" disabled={busy} onClick={() => onLinkNow([{ profileNames: names, key: tile.guess!.key }])}>
-            <LinkSimple size={18} aria-hidden />
-            <span>Link</span>
-          </button>
-          <button type="button" className="secondary" disabled={busy} onClick={() => onLink(names, tile.alias, null)}>
-            Something else
+          <button type="button" className="text-button" disabled={busy} onClick={() => onLink(names, tile.alias, null)}>
+            Not this one
           </button>
         </div>
       )}
 
-      {open && row.parent && selected === null && (
+      {advanced && open && row.parent && selected === null && (
         <div className="tile-details">
           <div className="muted">
             {several ? `The ${entry.nozzle} mm profile is built` : "Built"} on {row.parent}, with these changes:
@@ -312,6 +325,7 @@ export function InStudioView({
   data,
   studioName,
   busy,
+  advanced,
   items,
   printers,
   activeModel,
@@ -334,13 +348,15 @@ export function InStudioView({
   const set = (change: Partial<StudioFilters>) => onFilters({ ...filters, ...change });
   const toggled = (list: string[], value: string) => (list.includes(value) ? list.filter((other) => other !== value) : [...list, value]);
 
-  const entries = useMemo<Entry[]>(
-    () => [
-      ...(data?.added ?? []).map((row): Entry => ({ kind: "added", row, ...place(row.printer, printers) })),
-      ...(data?.own ?? []).map((row): Entry => ({ kind: "own", row, ...place(row.printer, printers) })),
-    ],
-    [data, printers],
-  );
+  const entries = useMemo<Entry[]>(() => {
+    // A filament linked to a product is that product's material, whatever its profile was labelled.
+    const products = new Map(items.map((item) => [item.key, item.material]));
+    const material = (row: Added | Own) => (row.catalogue_key && products.get(row.catalogue_key)) || row.material || null;
+    return [
+      ...(data?.added ?? []).map((row): Entry => ({ kind: "added", row, material: material(row), ...place(row.printer, printers) })),
+      ...(data?.own ?? []).map((row): Entry => ({ kind: "own", row, material: material(row), ...place(row.printer, printers) })),
+    ];
+  }, [data, printers, items]);
   const brands = useMemo(() => [...new Set(items.map((item) => item.brand))], [items]);
 
   /** The nozzles each filament has a profile for, whatever the filters hide. */
@@ -355,9 +371,10 @@ export function InStudioView({
   const everyPrinter = filters.allPrinters || !activeModel;
   const scoped = everyPrinter ? entries : entries.filter((e) => e.model === activeModel);
   const nozzles = [...new Set(scoped.map((e) => e.nozzle).filter(Boolean))].sort(byName);
-  const materials = [...new Set(scoped.map((e) => e.row.material).filter((m): m is string => !!m))].sort(byName);
+  const materials = [...new Set(scoped.map((e) => e.material).filter((m): m is string => !!m))].sort(byName);
   const wantedNozzles = filters.nozzles.filter((n) => nozzles.includes(n));
-  const wantedMaterials = filters.materials.filter((m) => materials.includes(m));
+  // Material filters are an Advanced control; one left on does nothing while they are hidden.
+  const wantedMaterials = advanced ? filters.materials.filter((m) => materials.includes(m)) : [];
   const typed = filters.query.toLowerCase().split(/\s+/).filter(Boolean);
   const says = (text: string) => typed.every((word) => text.toLowerCase().includes(word));
 
@@ -367,10 +384,10 @@ export function InStudioView({
       const { row } = entry;
       if (filters.source !== "all" && (filters.source === "toona") !== (entry.kind === "added")) continue;
       if (wantedNozzles.length && !wantedNozzles.includes(entry.nozzle)) continue;
-      if (wantedMaterials.length && !wantedMaterials.includes(row.material ?? "")) continue;
+      if (wantedMaterials.length && !wantedMaterials.includes(entry.material ?? "")) continue;
       const brand = row.brand ?? brandOf(row.alias, brands) ?? row.alias.split(/\s+/)[0] ?? "Other";
       const product = entry.kind === "own" ? (entry.row.product ?? "") : "";
-      if (!says(`${row.alias} ${brand} ${product} ${row.material ?? ""} ${row.printer}`)) continue;
+      if (!says(`${row.alias} ${brand} ${product} ${entry.material ?? ""} ${row.printer}`)) continue;
       const id = tileId(entry);
       const tile = found.get(id);
       if (tile) tile.entries.push(entry);
@@ -385,7 +402,7 @@ export function InStudioView({
     return [...found.values()].sort((a, b) => byName(a.alias, b.alias) || byName(a.model, b.model));
     // `says` and the wanted lists are made from the filters and the scope each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scoped, filters, brands, items]);
+  }, [scoped, filters, brands, items, advanced]);
 
   const groups = useMemo(() => {
     const found = new Map<string, Tile[]>();
@@ -474,8 +491,9 @@ export function InStudioView({
                   {nozzle}
                 </button>
               ))}
-            {nozzles.length > 1 && materials.length > 1 && <span className="filter-gap" aria-hidden />}
-            {materials.length > 1 &&
+            {advanced && nozzles.length > 1 && materials.length > 1 && <span className="filter-gap" aria-hidden />}
+            {advanced &&
+              materials.length > 1 &&
               materials.map((material) => (
                 <button
                   key={material}
@@ -547,6 +565,7 @@ export function InStudioView({
                     selected={selection ? selection.includes(tile.id) : null}
                     onSelect={() => setSelection(toggled(selection ?? [], tile.id))}
                     busy={busy}
+                    advanced={advanced}
                     sharedCounts={sharedCounts}
                     onRemove={onRemove}
                     onShare={onShare}

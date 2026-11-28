@@ -763,6 +763,8 @@ select.chip.on {
 /* The filament's colour, as a swatch like the ones in the catalogue. Dashed when it has none. */
 .tile-colour {
   flex: 0 0 auto;
+  /* Level with the name, not with wherever the tile's middle happens to fall. */
+  align-self: flex-start;
   width: 44px;
   height: 44px;
   border: 1px solid var(--line);
@@ -780,7 +782,7 @@ select.chip.on {
 }
 
 .tile .text {
-  flex: 1 1 200px;
+  flex: 1 1 170px;
   min-width: 0;
 }
 
@@ -1009,23 +1011,47 @@ button.tag[aria-pressed="true"] {
   justify-content: center;
 }
 
-.tile-guess,
 .tile-details {
   flex: 1 1 100%;
   padding-top: 8px;
   border-top: 1px solid var(--hairline);
 }
 
+/* What Toona thinks an unlinked filament is, as one quiet line under the tile. */
 .tile-guess {
+  flex: 1 1 100%;
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.text-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.text-button:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.title-line {
+  display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.tile-guess > span {
-  flex: 1 1 180px;
-  color: var(--muted);
+.tile-facts {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tile-guess strong {

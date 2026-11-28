@@ -792,6 +792,7 @@ export default function App() {
             data={inStudio}
             studioName={studioName}
             busy={busy}
+            advanced={advanced}
             items={items}
             printers={printers}
             activeModel={activeModel}
