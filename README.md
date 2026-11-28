@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/dmellok/toona/releases"><img src="https://img.shields.io/github/v/release/dmellok/toona?include_prereleases&label=download&color=15171A" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/macOS-Apple%20silicon-15171A" alt="macOS on Apple silicon">
+  <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-15171A" alt="macOS, Windows and Linux">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-AGPL--3.0-15171A" alt="Licence: AGPL 3.0"></a>
 </p>
 
@@ -19,7 +19,15 @@
 
 Toona is a desktop app that reads the [Open Filament Database](https://github.com/OpenFilamentCollective/open-filament-database) and writes a filament profile that Bambu Studio lists under Custom, the same kind it makes itself with Create Custom Filament. For PrusaSlicer it writes a filament preset that shows under User presets.
 
-It is an early preview. It runs on macOS on Apple silicon, and the builds are not signed with an Apple developer certificate or notarised. [Download the latest build](https://github.com/dmellok/toona/releases).
+It is an early preview. [Download the latest build](https://github.com/dmellok/toona/releases).
+
+| System | Download | State |
+| --- | --- | --- |
+| macOS, Apple silicon | `.dmg` | The one it is developed and tried on. Not signed with an Apple developer certificate or notarised, so the first time: right-click the app, choose Open, then Open again. |
+| Windows, 64-bit | `-setup.exe` | New and not yet tried on a real computer. Not code-signed, so Windows will warn before running it. |
+| Linux, 64-bit | `.AppImage` or `.deb` | New and not yet tried on a real computer. Also looks for a slicer installed as a Flatpak. |
+
+If you try the Windows or Linux build, an [issue](https://github.com/dmellok/toona/issues) saying how it went is very welcome.
 
 ## What it does
 
@@ -35,9 +43,9 @@ Each profile is built on one of Bambu Studio's own presets. Turn on Advanced and
 
 ![A profile's Layers view: columns for density, nozzle temperature, flow and other settings, with rows showing which layer set each value](.github/readme/layers.png)
 
-## What's in Bambu Studio
+## What's in your slicer
 
-The In Studio view lists what Toona added, the custom filaments you made yourself, and imported profiles that Bambu Studio hides from the AMS list, which Toona can repair.
+The In Studio view (In PrusaSlicer, when that is the slicer chosen) lists what Toona added next to the filaments you made yourself. For Bambu Studio it also lists imported profiles that Bambu Studio hides from the AMS list, which Toona can repair.
 
 ![The In Studio view: a filament Toona added, custom filaments made in Bambu Studio, and imported profiles with a Fix button](.github/readme/in-studio.png)
 
@@ -61,6 +69,7 @@ Toona talks to two places: GitHub, to download the catalogue, and `api.toona.wik
 | `app` | The desktop app: Tauri, with a React window in `app/src` and its backend in `app/src-tauri` |
 | `tools` | Scripts that prepare data shipped with the library |
 | `PROFILE_SPEC.md` | What a Bambu Studio filament profile is, worked out from real ones |
+| `.github/workflows` | Builds the app for macOS, Windows and Linux |
 
 The server behind `api.toona.wiki` is not part of this repository.
 
