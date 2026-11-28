@@ -1,0 +1,109 @@
+# Builds Toona for macOS, Windows and Linux, on the real thing each time.
+#
+# Runs for every version tag, on demand, and for branches named ci/... while the
+# build itself is being worked on. The packages are kept with the run; for a tag
+# they are also added to that version's GitHub release.
+#
+# With the maintainers' signing key in the TAURI_SIGNING_PRIVATE_KEY secret, each
+# package also gets the signature the in-app updater checks. Without it the
+# packages are built all the same, and cannot be offered as updates.
+name: Build
+
+on:
+  push:
+    tags: ["v*"]
+    branches: ["ci/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple silicon)
+            os: macos-latest
+            bundles: app,dmg
+          - name: Windows (x64)
+            os: windows-latest
+            bundles: nsis
+          - name: Linux (x64)
+            os: ubuntu-22.04
+            bundles: appimage,deb
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev build-essential file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the window's dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build
+        id: build
+        working-directory: app
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::warning::No signing key: building without the files the in-app updater needs."
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            npx tauri build --bundles "${{ matrix.bundles }}" --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          else
+            npx tauri build --bundles "${{ matrix.bundles }}"
+          fi
+
+      - name: Tests
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace
+
+      # A failed test still leaves the packages to look at.
+      - name: Gather the packages
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          mkdir -p packages
+          find target/release/bundle -type f \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \
+            -o -name '*-setup.exe' -o -name '*-setup.exe.sig' \
+            -o -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*.deb' \) -exec cp {} packages/ \;
+          # The Mac update file has no version or processor in its name; give it both.
+          version="$(node -p "require('./app/package.json').version")"
+          for file in packages/Toona.app.tar.gz packages/Toona.app.tar.gz.sig; do
+            [ -f "$file" ] && mv "$file" "packages/Toona_${version}_aarch64${file#packages/Toona}"
+          done
+          ls -l packages
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        with:
+          name: Toona ${{ matrix.name }}
+          path: packages/*
+          if-no-files-found: error
+
+      - name: Add to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" packages/* --clobber
