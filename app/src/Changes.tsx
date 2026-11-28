@@ -27,6 +27,16 @@ const LABELS: Record<string, string> = {
   fan_min_speed: "Fan, minimum",
   fan_max_speed: "Fan",
   filament_retraction_length: "Retraction length",
+  // PrusaSlicer's names for the same things.
+  filament_colour: "Colour",
+  temperature: "Nozzle",
+  first_layer_temperature: "Nozzle, first layer",
+  bed_temperature: "Bed",
+  first_layer_bed_temperature: "Bed, first layer",
+  extrusion_multiplier: "Flow",
+  max_fan_speed: "Fan",
+  min_fan_speed: "Fan, minimum",
+  bridge_fan_speed: "Fan, bridges",
 };
 
 export const LAYERS: Record<Change["layer"], { name: string; colour: string }> = {

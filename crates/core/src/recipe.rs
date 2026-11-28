@@ -75,7 +75,8 @@ impl Recipe {
 
 /// The layer a catalogue-driven change belongs to.
 pub fn catalogue_layer(key: &str) -> Layer {
-    if key == "default_filament_colour" {
+    // The colour setting of Bambu Studio and of PrusaSlicer.
+    if key == "default_filament_colour" || key == "filament_colour" {
         Layer::Colour
     } else {
         Layer::Manufacturer

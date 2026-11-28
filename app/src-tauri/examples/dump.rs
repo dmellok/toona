@@ -1,6 +1,6 @@
 //! Writes real answers from the backend as JSON, so the window can be developed
 //! and screenshotted in a plain browser. Read-only: installs are dry runs.
-//! Usage: cargo run -p toona-app --example dump -- <out dir>
+//! Usage: cargo run -p toona-app --example dump -- <out dir> [catalogue key]...
 
 use toona_app_lib::api::{Backend, InstallRequest};
 
@@ -11,7 +11,15 @@ fn json<T: serde::Serialize>(value: &T) -> serde_json::Value {
 fn main() {
     let out = std::path::PathBuf::from(std::env::args().nth(1).expect("usage: dump <out dir>"));
     std::fs::create_dir_all(&out).unwrap();
-    let backend = Backend::standard().unwrap();
+    // TOONA_DATA_DIR keeps Toona's own files (what it added, the catalogue) apart from the real ones.
+    let mut backend = match std::env::var_os("TOONA_DATA_DIR") {
+        Some(root) => Backend::new(toona_core::AppDirs::under(std::path::Path::new(&root))),
+        None => Backend::standard().unwrap(),
+    };
+    // TOONA_SLICER (a slicer's id) and TOONA_SLICER_DIR (its settings folder) pick what to dump.
+    if let Some(kind) = std::env::var("TOONA_SLICER").ok().and_then(|id| toona_core::SlicerKind::from_id(&id)) {
+        backend = backend.with_slicer(kind, std::env::var_os("TOONA_SLICER_DIR").map(std::path::PathBuf::from));
+    }
     let write = |name: &str, value: serde_json::Value| {
         std::fs::write(out.join(format!("{name}.json")), serde_json::to_string(&value).unwrap()).unwrap();
     };

@@ -4821,6 +4821,7 @@ dependencies = [
  "directories",
  "flate2",
  "md-5",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

@@ -27,6 +27,9 @@ struct Stored {
     /// Days since 1970 of the last hello that reached the server.
     #[serde(default)]
     last_hello: Option<i64>,
+    /// The slicer chosen in the window, as its id. Unset until one is chosen.
+    #[serde(default)]
+    slicer: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -107,6 +110,17 @@ impl Backend {
             "new_week": last.is_none_or(|last| week(last) != week(day)),
             "new_month": last.is_none_or(|last| month(last) != month(day)),
         })
+    }
+
+    /// The slicer the person chose to work with, if they chose one.
+    pub(crate) fn chosen_slicer(&self) -> Option<toona_core::SlicerKind> {
+        toona_core::SlicerKind::from_id(&self.stored().slicer?)
+    }
+
+    pub(crate) fn remember_slicer(&self, kind: toona_core::SlicerKind) -> UiResult<()> {
+        let mut stored = self.stored();
+        stored.slicer = Some(kind.id().to_string());
+        self.store(&stored)
     }
 
     pub fn prefs(&self) -> PrefsDto {

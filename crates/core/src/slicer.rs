@@ -18,6 +18,35 @@ pub enum SlicerKind {
     BambuStudio,
     /// Same profile family as Bambu Studio. Not verified against a real install yet.
     OrcaSlicer,
+    PrusaSlicer,
+}
+
+/// How a slicer keeps its presets. Slicers of one family share file formats and setting names.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Family {
+    /// Bambu Studio and its relatives: a JSON file per filament and printer preset.
+    #[default]
+    Bambu,
+    /// PrusaSlicer: an INI file per filament, tied to printers by a condition.
+    Prusa,
+}
+
+impl Family {
+    /// Settings a profile keeps as fields of its own rather than among its settings.
+    pub fn field_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Bambu => &["compatible_printers", "filament_vendor", "filament_type"],
+            Self::Prusa => &["filament_vendor", "filament_type"],
+        }
+    }
+
+    /// The name of the family's own slicer, for messages that are about the format.
+    pub fn slicer_name(self) -> &'static str {
+        match self {
+            Self::Bambu => "Bambu Studio",
+            Self::Prusa => "PrusaSlicer",
+        }
+    }
 }
 
 impl SlicerKind {
@@ -25,7 +54,20 @@ impl SlicerKind {
         match self {
             Self::BambuStudio => "Bambu Studio",
             Self::OrcaSlicer => "OrcaSlicer",
+            Self::PrusaSlicer => "PrusaSlicer",
         }
+    }
+
+    pub fn family(self) -> Family {
+        match self {
+            Self::BambuStudio | Self::OrcaSlicer => Family::Bambu,
+            Self::PrusaSlicer => Family::Prusa,
+        }
+    }
+
+    /// The slicer with this [`SlicerKind::id`].
+    pub fn from_id(id: &str) -> Option<Self> {
+        [Self::BambuStudio, Self::OrcaSlicer, Self::PrusaSlicer].into_iter().find(|kind| kind.id() == id)
     }
 
     /// Folder name under the OS config directory, also the stem of the `.conf` file.
@@ -33,6 +75,7 @@ impl SlicerKind {
         match self {
             Self::BambuStudio => "BambuStudio",
             Self::OrcaSlicer => "OrcaSlicer",
+            Self::PrusaSlicer => "PrusaSlicer",
         }
     }
 
@@ -41,6 +84,7 @@ impl SlicerKind {
         match self {
             Self::BambuStudio => "bambu-studio",
             Self::OrcaSlicer => "orca-slicer",
+            Self::PrusaSlicer => "prusa-slicer",
         }
     }
 
@@ -49,11 +93,12 @@ impl SlicerKind {
         match self {
             Self::BambuStudio => &["bambustudio", "bambu-studio", "bambu studio"],
             Self::OrcaSlicer => &["orcaslicer", "orca-slicer", "orca slicer"],
+            Self::PrusaSlicer => &["prusaslicer", "prusa-slicer", "prusa slicer"],
         }
     }
 }
 
-/// What the tool reads from `<Slicer>.conf`.
+/// What the tool reads from the slicer's own settings file (`<Slicer>.conf` or `PrusaSlicer.ini`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppConf {
     /// `app.preset_folder`: the signed-in account id, or `default`.
@@ -172,20 +217,31 @@ impl Slicer {
     /// A slicer config folder at an explicit path.
     pub fn at(kind: SlicerKind, config_dir: impl Into<PathBuf>) -> Result<Self> {
         let config_dir = config_dir.into();
-        if !config_dir.join("system").is_dir() {
+        let marker = match kind.family() {
+            Family::Bambu => config_dir.join("system"),
+            Family::Prusa => config_dir.join("PrusaSlicer.ini"),
+        };
+        if !marker.exists() {
             return Err(Error::SlicerNotFound { slicer: kind.display_name(), path: config_dir });
         }
         Ok(Self { kind, config_dir })
     }
 
     pub fn conf_path(&self) -> PathBuf {
-        self.config_dir.join(format!("{}.conf", self.kind.folder_name()))
+        let extension = match self.kind.family() {
+            Family::Bambu => "conf",
+            Family::Prusa => "ini",
+        };
+        self.config_dir.join(format!("{}.{extension}", self.kind.folder_name()))
     }
 
     pub fn conf(&self) -> Result<AppConf> {
         let path = self.conf_path();
         let text = fs::read_to_string(&path).map_err(Error::read(&path))?;
-        AppConf::parse(&text).map_err(Error::json(&path))
+        match self.kind.family() {
+            Family::Bambu => AppConf::parse(&text).map_err(Error::json(&path)),
+            Family::Prusa => Ok(crate::prusa::parse_app_conf(&text)),
+        }
     }
 
     /// `system/BBL`: the Bambu Lab system presets.
@@ -194,12 +250,30 @@ impl Slicer {
     }
 
     pub fn system_library(&self) -> Result<SystemLibrary> {
-        SystemLibrary::load(&self.system_vendor_dir())
+        match self.kind.family() {
+            Family::Bambu => SystemLibrary::load(&self.system_vendor_dir()),
+            Family::Prusa => SystemLibrary::load_prusa(&self.config_dir),
+        }
     }
 
-    /// `user/`: every account's presets.
+    /// When the presets [`Slicer::system_library`] reads last changed, as far as that can
+    /// be told cheaply. A library loaded before this moved on is out of date.
+    pub fn library_stamp(&self) -> Option<std::time::SystemTime> {
+        let folders: &[&str] = match self.kind.family() {
+            Family::Bambu => &["system"],
+            // The user's own printer presets are part of what PrusaSlicer filaments are matched to.
+            Family::Prusa => &["vendor", "printer"],
+        };
+        folders.iter().filter_map(|folder| fs::metadata(self.config_dir.join(folder)).ok()?.modified().ok()).max()
+    }
+
+    /// The folder the user's own presets live in, which is what gets backed up:
+    /// `user/` with every account's presets, or PrusaSlicer's `filament/`.
     pub fn user_root(&self) -> PathBuf {
-        self.config_dir.join("user")
+        match self.kind.family() {
+            Family::Bambu => self.config_dir.join("user"),
+            Family::Prusa => self.config_dir.join("filament"),
+        }
     }
 
     /// Names of the folders under `user/`.
@@ -218,8 +292,12 @@ impl Slicer {
         Ok(names)
     }
 
-    /// `user/<preset_folder>/filament/base`: where root filament profiles live.
+    /// Where the filaments the tool writes go: `user/<preset_folder>/filament/base`, the
+    /// home of root filament profiles, or PrusaSlicer's `filament/`.
     pub fn custom_filament_dir(&self, conf: &AppConf) -> PathBuf {
+        if self.kind.family() == Family::Prusa {
+            return self.user_root();
+        }
         let folder = if conf.preset_folder.is_empty() { SIGNED_OUT_FOLDER } else { &conf.preset_folder };
         self.user_root().join(folder).join("filament").join("base")
     }
@@ -230,9 +308,9 @@ impl Slicer {
             .machines()
             .iter()
             .filter(|machine| {
-                conf.models
-                    .iter()
-                    .any(|m| m.model == machine.model && m.nozzles.contains(&machine.nozzle))
+                // A printer preset the user made themselves is set up by being there.
+                machine.user
+                    || conf.models.iter().any(|m| m.model == machine.model_id && m.nozzles.contains(&machine.nozzle))
             })
             .map(|machine| PrinterPreset {
                 name: machine.name.clone(),
@@ -248,6 +326,22 @@ impl Slicer {
     /// User filament profiles of the active account, both inherited and root ones.
     pub fn user_filaments(&self, conf: &AppConf) -> Result<Vec<UserFilament>> {
         let base_dir = self.custom_filament_dir(conf);
+        if self.kind.family() == Family::Prusa {
+            // One flat file per filament, named after it. All of them are the user's own.
+            let mut found = Vec::new();
+            if base_dir.is_dir() {
+                for entry in fs::read_dir(&base_dir).map_err(Error::read(&base_dir))? {
+                    let path = entry.map_err(Error::read(&base_dir))?.path();
+                    if !path.is_file() || path.extension().is_none_or(|ext| ext != "ini") {
+                        continue;
+                    }
+                    let Some(name) = path.file_stem().map(|stem| stem.to_string_lossy().into_owned()) else { continue };
+                    found.push(UserFilament { name, filament_id: None, is_root: true, path });
+                }
+            }
+            found.sort_by(|a, b| a.name.cmp(&b.name));
+            return Ok(found);
+        }
         let mut found = Vec::new();
         for dir in [base_dir.parent().map(Path::to_path_buf), Some(base_dir.clone())].into_iter().flatten() {
             if !dir.is_dir() {

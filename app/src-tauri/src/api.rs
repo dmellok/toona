@@ -16,8 +16,11 @@ use toona_core::recipe::catalogue_layer;
 use toona_core::{
     build_profile_with_recipe, convert_inherited_with_recipes, AppConf, AppDirs, Catalogue, CatalogueFilament,
     ConvertRequest, Error, FilamentProfile, InstallOptions, Layer, Manifest, MaterialClass,
-    PlannedProfile, ProfileRequest, Recipe, Refresh, Slicer, SlicerKind, SystemLibrary, Variant,
+    Family, PlannedProfile, PrinterPreset, ProfileRequest, Recipe, Refresh, Slicer, SlicerKind, SystemLibrary, Variant,
 };
+
+/// The slicers the window offers, in the order it prefers them when nothing was chosen.
+const SLICERS: &[SlicerKind] = &[SlicerKind::BambuStudio, SlicerKind::PrusaSlicer];
 
 /// The catalogue is published daily; a cached copy is refreshed after this long.
 const CATALOGUE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -53,16 +56,53 @@ fn other(message: impl Into<String>) -> UiError {
 pub struct Backend {
     dirs: AppDirs,
     community: Community,
-    kind: SlicerKind,
+    kind: Mutex<SlicerKind>,
+    /// The slicer's settings folder, when it is not to be looked for in its usual place.
+    folder: Option<PathBuf>,
     catalogue: Mutex<Option<Arc<Catalogue>>>,
-    /// System presets are a few hundred files; parsed once per slicer folder.
-    library: Mutex<Option<(PathBuf, Arc<SystemLibrary>)>>,
+    /// System presets are hundreds of files; parsed once per slicer folder, and again
+    /// when the slicer's presets have changed since.
+    library: Mutex<Option<(PathBuf, Option<std::time::SystemTime>, Arc<SystemLibrary>)>>,
 }
 
 struct Studio {
     slicer: Slicer,
     conf: AppConf,
     library: Arc<SystemLibrary>,
+}
+
+impl Studio {
+    fn printers(&self) -> Vec<PrinterPreset> {
+        self.slicer.printers(&self.conf, &self.library)
+    }
+
+    /// The set-up printer presets a profile in the slicer's folder is for. A Bambu Studio
+    /// profile names its one printer; a PrusaSlicer preset shows for every printer its
+    /// condition holds for. `made_for` stands in when the file does not say.
+    fn printers_of(&self, path: &std::path::Path, made_for: Option<&str>, printers: &[PrinterPreset]) -> Vec<String> {
+        let written = FilamentProfile::read(path);
+        let mut found: Vec<String> = match (&written, self.library.family) {
+            (Some(written), Family::Bambu) => written.compatible_printers.first().cloned().into_iter().collect(),
+            (Some(written), Family::Prusa) => printers
+                .iter()
+                .filter(|printer| self.library.shows_for(&written.settings, &printer.name))
+                .map(|printer| printer.name.clone())
+                .collect(),
+            (None, _) => Vec::new(),
+        };
+        if found.is_empty() {
+            found.extend(made_for.map(str::to_string));
+        }
+        found
+    }
+}
+
+#[derive(Serialize)]
+pub struct SlicerDto {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// Its settings folder is on this computer.
+    pub found: bool,
 }
 
 #[derive(Serialize)]
@@ -77,6 +117,10 @@ pub struct PrinterDto {
 #[derive(Serialize)]
 pub struct Status {
     pub slicer: &'static str,
+    /// [`SlicerKind::id`] of the slicer being worked with.
+    pub id: &'static str,
+    /// Every slicer the window can work with.
+    pub slicers: Vec<SlicerDto>,
     pub found: bool,
     pub running: bool,
     /// New profiles will be uploaded to the slicer's cloud.
@@ -342,7 +386,44 @@ pub struct BarcodeDto {
 impl Backend {
     pub fn new(dirs: AppDirs) -> Self {
         let community = Community::new(dirs.data_dir.clone());
-        Self { dirs, community, kind: SlicerKind::BambuStudio, catalogue: Mutex::new(None), library: Mutex::new(None) }
+        let backend =
+            Self { dirs, community, kind: Mutex::new(SLICERS[0]), folder: None, catalogue: Mutex::new(None), library: Mutex::new(None) };
+        // The slicer chosen last time; before any choice, the first one that is installed.
+        let kind = backend
+            .chosen_slicer()
+            .or_else(|| SLICERS.iter().copied().find(|kind| Slicer::detect(*kind).is_ok()))
+            .unwrap_or(SLICERS[0]);
+        backend.use_slicer(kind);
+        backend
+    }
+
+    /// Works with one slicer whatever was chosen before, and without remembering it; with
+    /// `folder`, on a settings folder somewhere other than the usual place. For examples and tests.
+    pub fn with_slicer(mut self, kind: SlicerKind, folder: Option<PathBuf>) -> Self {
+        self.use_slicer(kind);
+        self.folder = folder;
+        self
+    }
+
+    /// The slicer being worked with.
+    pub(crate) fn kind(&self) -> SlicerKind {
+        *self.kind.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn use_slicer(&self, kind: SlicerKind) {
+        *self.kind.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = kind;
+    }
+
+    /// Switches to another slicer and remembers the choice.
+    pub fn set_slicer(&self, id: &str) -> UiResult<Status> {
+        let kind = SLICERS
+            .iter()
+            .copied()
+            .find(|kind| kind.id() == id)
+            .ok_or_else(|| other(format!("Toona doesn't work with \"{id}\".")))?;
+        self.remember_slicer(kind)?;
+        self.use_slicer(kind);
+        Ok(self.status())
     }
 
     pub fn standard() -> Result<Self, Error> {
@@ -350,14 +431,18 @@ impl Backend {
     }
 
     fn studio(&self) -> Result<Studio, Error> {
-        let slicer = Slicer::detect(self.kind)?;
+        let slicer = match &self.folder {
+            Some(folder) => Slicer::at(self.kind(), folder)?,
+            None => Slicer::detect(self.kind())?,
+        };
         let conf = slicer.conf()?;
+        let stamp = slicer.library_stamp();
         let mut cached = self.library.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let library = match cached.as_ref() {
-            Some((dir, library)) if *dir == slicer.config_dir => library.clone(),
+            Some((dir, loaded, library)) if *dir == slicer.config_dir && *loaded == stamp => library.clone(),
             _ => {
                 let library = Arc::new(slicer.system_library()?);
-                *cached = Some((slicer.config_dir.clone(), library.clone()));
+                *cached = Some((slicer.config_dir.clone(), stamp, library.clone()));
                 library
             }
         };
@@ -394,12 +479,20 @@ impl Backend {
     }
 
     pub fn status(&self) -> Status {
-        let slicer = self.kind.display_name();
+        let kind = self.kind();
+        let slicer = kind.display_name();
+        let id = kind.id();
+        let slicers: Vec<SlicerDto> = SLICERS
+            .iter()
+            .map(|kind| SlicerDto { id: kind.id(), name: kind.display_name(), found: Slicer::detect(*kind).is_ok() })
+            .collect();
         match self.studio() {
             Ok(studio) => {
                 let running = studio.slicer.is_running();
                 Status {
                     slicer,
+                    id,
+                    slicers,
                     found: true,
                     // If the check itself fails, assume it is open: writing is the risky direction.
                     running: running.as_ref().copied().unwrap_or(true),
@@ -415,6 +508,8 @@ impl Backend {
             }
             Err(error) => Status {
                 slicer,
+                id,
+                slicers,
                 found: false,
                 running: false,
                 cloud_sync: false,
@@ -428,6 +523,7 @@ impl Backend {
         let refresh = if force_refresh { Refresh::Force } else { Refresh::IfOlderThan(CATALOGUE_MAX_AGE) };
         let catalogue = self.load_catalogue(refresh)?;
         let manifest = self.manifest();
+        let slicer = self.kind().id();
         let items = catalogue
             .filaments()
             .iter()
@@ -450,7 +546,7 @@ impl Backend {
                     colours: filament.variants.len(),
                     stripes,
                     discontinued: filament.discontinued,
-                    added: manifest.profiles.iter().any(|p| p.catalogue_key == filament.key),
+                    added: manifest.profiles.iter().any(|p| p.slicer == slicer && p.catalogue_key == filament.key),
                 }
             })
             .collect();
@@ -470,11 +566,19 @@ impl Backend {
         let filament = find_by_key(&catalogue, key)?;
         let variant = colour.and_then(|name| filament.variant(name));
         let manifest = self.manifest();
+        let studio = self.studio();
+        let set_up = studio.as_ref().map(Studio::printers).unwrap_or_default();
         let added_aliases: Vec<&str> = manifest
             .profiles
             .iter()
-            .filter(|p| p.catalogue_key == filament.key)
-            .filter(|p| printer.is_none_or(|printer| p.printer == printer))
+            .filter(|p| p.slicer == self.kind().id() && p.catalogue_key == filament.key)
+            .filter(|p| {
+                printer.is_none_or(|printer| match (&studio, p.profile_file()) {
+                    // What the file says counts: a PrusaSlicer preset serves several printers.
+                    (Ok(studio), Some(file)) => studio.printers_of(file, Some(&p.printer), &set_up).iter().any(|name| name == printer),
+                    _ => p.printer == printer,
+                })
+            })
             .map(|p| p.alias.as_str())
             .collect();
 
@@ -485,15 +589,13 @@ impl Backend {
         let mut base_printers = Vec::new();
         let mut built = None;
         if filament.class == MaterialClass::Resin {
-            blocked = Some(format!("{} only takes filament profiles.", self.kind.display_name()));
-        } else if let (Some(printer), Ok(studio)) = (printer, self.studio()) {
+            blocked = Some(format!("{} only takes filament profiles.", self.kind().display_name()));
+        } else if let (Some(printer), Ok(studio)) = (printer, &studio) {
             bases = studio.library.filaments_for_printer(printer).into_iter().map(str::to_string).collect();
-            base_printers = studio
-                .slicer
-                .printers(&studio.conf, &studio.library)
-                .into_iter()
+            base_printers = set_up
+                .iter()
                 .filter(|p| choose_base(&studio.library, filament, &p.name, base_override).is_ok())
-                .map(|p| p.name)
+                .map(|p| p.name.clone())
                 .collect();
             match choose_base(&studio.library, filament, printer, base_override) {
                 Ok(choice) => {
@@ -515,7 +617,9 @@ impl Backend {
                                 .library
                                 .resolve_filament(&choice.preset)
                                 .ok()
-                                .and_then(|base| first(base.settings.get(FLOW_KEY)?));
+                                .and_then(|base| first(base.settings.get(FLOW_KEY)?))
+                                // PrusaSlicer writes "no limit" as 0, which is no figure to compare with.
+                                .filter(|flow| *flow > 0.0);
                             built = Some((profile, base_flow));
                         }
                         Err(error) => blocked = Some(sentence(&error.to_string())),
@@ -635,13 +739,17 @@ impl Backend {
                 },
             )?;
             let base = choose_base(&studio.library, filament, printer, request.base.as_deref())?;
-            described.push(PlannedDto {
+            let dto = PlannedDto {
                 name: profile.name.clone(),
                 filament_id: profile.filament_id.clone(),
                 base: preset_alias(&base.preset).to_string(),
                 source: base.source.label(),
-            });
-            planned.push(PlannedProfile { catalogue_key: filament.key.clone(), profile, recipe: Some(recipe) });
+            };
+            let item = PlannedProfile { catalogue_key: filament.key.clone(), printer: printer.clone(), profile, recipe: Some(recipe) };
+            // One PrusaSlicer preset serves every printer its base preset does.
+            if item.add_to(&mut planned) {
+                described.push(dto);
+            }
         }
         let alias = planned.first().map(|p: &PlannedProfile| p.profile.alias().to_string()).unwrap_or_else(|| profile_alias(filament, variant));
         Ok((alias, planned, described))
@@ -682,18 +790,26 @@ impl Backend {
         let studio = self.studio().ok();
         let catalogue = self.load_catalogue(Refresh::IfMissing).ok();
         let links = self.community.links();
+        let printers = studio.as_ref().map(Studio::printers).unwrap_or_default();
         let added = manifest
             .profiles
             .iter()
-            .filter(|p| p.slicer == self.kind.id())
-            .map(|profile| {
-                let json = profile.files.iter().find(|f| f.extension().is_some_and(|ext| ext == "json"));
+            .filter(|p| p.slicer == self.kind().id())
+            .flat_map(|profile| {
+                let json = profile.profile_file();
+                // Listed once for each printer it serves: a PrusaSlicer preset may serve several.
+                let serves = match (&studio, json) {
+                    (Some(studio), Some(file)) => studio.printers_of(file, Some(&profile.printer), &printers),
+                    _ => vec![profile.printer.clone()],
+                };
                 // Profiles added before recipes were recorded get theirs worked out from the file.
                 let recipe = profile.recipe.clone().or_else(|| {
                     recover_recipe(studio.as_ref()?, catalogue.as_deref()?, &profile.catalogue_key, &profile.printer, json?)
                 });
                 let facts = json.map(|path| Facts::read(path)).unwrap_or_default();
-                AddedDto {
+                let catalogue = &catalogue;
+                let links = &links;
+                serves.into_iter().map(move |printer| AddedDto {
                     profile_name: profile.profile_name.clone(),
                     alias: profile.alias.clone(),
                     catalogue_key: profile.catalogue_key.clone(),
@@ -701,19 +817,19 @@ impl Backend {
                         .as_deref()
                         .and_then(|c| c.filaments().iter().find(|f| f.key == profile.catalogue_key))
                         .map(|f| f.brand.clone())
-                        .or(facts.vendor),
-                    printer: profile.printer.clone(),
-                    hex: facts.hex,
-                    material: facts.material,
-                    nozzle_temp: facts.nozzle_temp,
-                    bed_temp: facts.bed_temp,
-                    max_flow: facts.max_flow,
+                        .or(facts.vendor.clone()),
+                    printer,
+                    hex: facts.hex.clone(),
+                    material: facts.material.clone(),
+                    nozzle_temp: facts.nozzle_temp.clone(),
+                    bed_temp: facts.bed_temp.clone(),
+                    max_flow: facts.max_flow.clone(),
                     synced: json.and_then(|path| Slicer::preset_info(path)).is_some_and(|info| info.is_cloud_synced()),
                     present: profile.files.iter().all(|f| f.exists()),
                     parent: recipe.as_ref().map(|r| preset_alias(&r.parent).to_string()),
                     changes: recipe.as_ref().map(describe).unwrap_or_default(),
                     linked: links.contains_key(&profile.profile_name),
-                }
+                })
             })
             .collect();
         // Without the slicer there is nothing of the user's own to list; the added list still stands.
@@ -725,23 +841,26 @@ impl Backend {
         let own = filaments
             .iter()
             .filter(|f| f.is_root && !manifest.profiles.iter().any(|p| p.files.contains(&f.path)))
-            .filter_map(|f| {
-                let written = FilamentProfile::from_json(&std::fs::read_to_string(&f.path).ok()?).ok()?;
-                let printer = written.compatible_printers.first()?.clone();
+            .flat_map(|f| {
+                // One that shows for no printer set up here has no place in the list.
+                let serves = studio.as_ref().map(|studio| studio.printers_of(&f.path, None, &printers)).unwrap_or_default();
                 let key = products.get(&f.name).cloned();
                 let filament = key.as_ref().and_then(|key| catalogue.as_deref()?.filaments().iter().find(|c| &c.key == key));
-                let recipe = filament.and_then(|c| recover_recipe(studio.as_ref()?, catalogue.as_deref()?, &c.key, &printer, &f.path));
+                let recipe = serves
+                    .first()
+                    .and_then(|printer| recover_recipe(studio.as_ref()?, catalogue.as_deref()?, &filament?.key, printer, &f.path));
                 let facts = Facts::read(&f.path);
-                Some(OwnDto {
+                let links = &links;
+                serves.into_iter().map(move |printer| OwnDto {
                     profile_name: f.name.clone(),
                     alias: f.alias().to_string(),
-                    brand: filament.map(|c| c.brand.clone()).or(facts.vendor),
+                    brand: filament.map(|c| c.brand.clone()).or(facts.vendor.clone()),
                     printer,
-                    hex: facts.hex,
-                    material: facts.material,
-                    nozzle_temp: facts.nozzle_temp,
-                    bed_temp: facts.bed_temp,
-                    max_flow: facts.max_flow,
+                    hex: facts.hex.clone(),
+                    material: facts.material.clone(),
+                    nozzle_temp: facts.nozzle_temp.clone(),
+                    bed_temp: facts.bed_temp.clone(),
+                    max_flow: facts.max_flow.clone(),
                     synced: Slicer::preset_info(&f.path).is_some_and(|info| info.is_cloud_synced()),
                     product: filament.map(|c| format!("{} {}", c.brand, c.name)),
                     catalogue_key: filament.map(|c| c.key.clone()),
@@ -752,7 +871,6 @@ impl Backend {
             })
             .collect();
         // Only what can really be converted is offered for fixing; the rest says why not.
-        let printers = studio.as_ref().map(|studio| studio.slicer.printers(&studio.conf, &studio.library)).unwrap_or_default();
         let imported = filaments
             .iter()
             .filter(|f| !f.is_root)
@@ -800,6 +918,14 @@ impl Backend {
     /// custom filaments the user made in the slicer themselves.
     pub fn remove_many(&self, profile_names: &[String]) -> UiResult<RemoveDto> {
         let studio = self.studio()?;
+        // A PrusaSlicer preset is listed once per printer it serves, so a name may come twice.
+        let mut names: Vec<String> = Vec::new();
+        for name in profile_names {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        let profile_names = &names[..];
         let report = install::remove_many(&studio.slicer, &studio.conf, &self.dirs, profile_names)?;
         for name in profile_names {
             self.community.unlink(name);
@@ -839,10 +965,10 @@ impl Backend {
         let source = manifest
             .profiles
             .iter()
-            .find(|p| p.slicer == self.kind.id() && p.profile_name == profile_name)
+            .find(|p| p.slicer == self.kind().id() && p.profile_name == profile_name)
             .ok_or_else(|| UiError::from(Error::NotInstalled(profile_name.to_string())))?;
         let filament = find_by_key(&catalogue, &source.catalogue_key)?;
-        let json = source.files.iter().find(|f| f.extension().is_some_and(|ext| ext == "json"));
+        let json = source.profile_file();
         let recipe = source
             .recipe
             .clone()
@@ -908,7 +1034,7 @@ impl Backend {
     pub fn fix_imported(&self, names: &[String], allow_cloud_sync: bool, dry_run: bool) -> UiResult<InstallDto> {
         let studio = self.studio()?;
         let existing = studio.slicer.user_filaments(&studio.conf)?;
-        let printers = studio.slicer.printers(&studio.conf, &studio.library);
+        let printers = studio.printers();
         let mut planned = Vec::new();
         let mut described = Vec::new();
         for name in names {
@@ -933,6 +1059,7 @@ impl Backend {
                 });
                 planned.push(PlannedProfile {
                     catalogue_key: format!("converted/{}", source.name),
+                    printer: profile.compatible_printers.first().cloned().unwrap_or_default(),
                     profile,
                     recipe: Some(recipe),
                 });
@@ -1021,7 +1148,7 @@ impl Backend {
         });
         let unusable = studio
             .filter(|studio| !studio.library.has_filament(&version.parent_preset))
-            .map(|_| format!("Built on a preset your {} doesn't have.", self.kind.display_name()));
+            .map(|_| format!("Built on a preset your {} doesn't have.", self.kind().display_name()));
         SharedDto {
             id: version.id,
             profile_id: version.profile_id,
@@ -1053,7 +1180,7 @@ impl Backend {
 
     /// Profiles people shared for a filament on one printer model and nozzle, best first.
     pub fn community(&self, key: &str, model: &str, nozzle: &str) -> UiResult<Vec<SharedDto>> {
-        let versions = self.community.versions(key, model, nozzle, self.kind.id())?;
+        let versions = self.community.versions(key, model, nozzle, self.kind().id())?;
         let studio = self.studio().ok();
         Ok(versions.into_iter().map(|version| self.shared_dto(studio.as_ref(), version)).collect())
     }
@@ -1071,7 +1198,7 @@ impl Backend {
         let base_settings = studio
             .library
             .resolve_filament(&version.parent_preset)
-            .map_err(|_| other(format!("That profile is built on a preset your {} doesn't have.", self.kind.display_name())))?
+            .map_err(|_| other(format!("That profile is built on a preset your {} doesn't have.", self.kind().display_name())))?
             .settings;
         // A shared version is for one printer model and nozzle; only that preset gets it.
         let printers: Vec<String> = studio
@@ -1140,7 +1267,7 @@ impl Backend {
             .printers(&studio.conf, &studio.library)
             .into_iter()
             .find(|p| p.name == printer_preset)
-            .ok_or_else(|| other(format!("The printer \"{printer_preset}\" is no longer set up in {}.", self.kind.display_name())))?;
+            .ok_or_else(|| other(format!("The printer \"{printer_preset}\" is no longer set up in {}.", self.kind().display_name())))?;
         let body = serde_json::json!({
             "product": {
                 "key": filament.key,
@@ -1151,7 +1278,7 @@ impl Backend {
             },
             "printer": printer.model,
             "nozzle": printer.nozzle,
-            "slicer": self.kind.id(),
+            "slicer": self.kind().id(),
             "parent_preset": recipe.parent,
             "changes": changes,
             "note": note.trim(),
@@ -1204,6 +1331,43 @@ const SETTINGS: &[(&str, &str, f64, f64, f64, &str)] = &[
     ("fan_min_speed", "Cooling", 0.0, 100.0, 10.0, "%"),
     ("filament_density", "Material", 0.5, 20.0, 0.01, " g/cm³"),
 ];
+
+/// [`SETTINGS`] for PrusaSlicer, which names its settings differently and has one bed.
+const PRUSA_SETTINGS: &[(&str, &str, f64, f64, f64, &str)] = &[
+    ("temperature", "Temperature", 150.0, 350.0, 5.0, "°"),
+    ("first_layer_temperature", "Temperature", 150.0, 350.0, 5.0, "°"),
+    ("bed_temperature", "Temperature", 0.0, 130.0, 5.0, "°"),
+    ("first_layer_bed_temperature", "Temperature", 0.0, 130.0, 5.0, "°"),
+    ("extrusion_multiplier", "Flow", 0.5, 1.5, 0.01, ""),
+    ("filament_max_volumetric_speed", "Flow", 0.0, 60.0, 1.0, " mm³/s"),
+    ("max_fan_speed", "Cooling", 0.0, 100.0, 10.0, "%"),
+    ("min_fan_speed", "Cooling", 0.0, 100.0, 10.0, "%"),
+    ("bridge_fan_speed", "Cooling", 0.0, 100.0, 10.0, "%"),
+    ("filament_density", "Material", 0.0, 20.0, 0.01, " g/cm³"),
+];
+
+fn settings_of(family: Family) -> &'static [(&'static str, &'static str, f64, f64, f64, &'static str)] {
+    match family {
+        Family::Bambu => SETTINGS,
+        Family::Prusa => PRUSA_SETTINGS,
+    }
+}
+
+/// What each family calls the settings the window shows as plain facts.
+struct Keys {
+    nozzle: &'static str,
+    /// The beds to read, the usual one first.
+    beds: &'static [&'static str],
+    colour: &'static str,
+}
+
+fn keys_of(family: Family) -> Keys {
+    match family {
+        // The smooth plate most printers ship with, or else the textured one.
+        Family::Bambu => Keys { nozzle: "nozzle_temperature", beds: &["hot_plate_temp", "textured_plate_temp"], colour: "default_filament_colour" },
+        Family::Prusa => Keys { nozzle: "temperature", beds: &["bed_temperature"], colour: "filament_colour" },
+    }
+}
 
 /// The single value of a setting, when it has one: `["220", "220"]` and `"220"` are `220`.
 fn single(value: &serde_json::Value) -> Option<&str> {
@@ -1302,12 +1466,11 @@ impl Backend {
     fn source(&self, studio: &Studio, catalogue: &Catalogue, profile_name: &str) -> UiResult<Source> {
         let manifest = self.manifest();
         if let Some(profile) =
-            manifest.profiles.iter().find(|p| p.profile_name == profile_name && p.slicer == self.kind.id())
+            manifest.profiles.iter().find(|p| p.profile_name == profile_name && p.slicer == self.kind().id())
         {
             let json = profile
-                .files
-                .iter()
-                .find(|f| f.extension().is_some_and(|ext| ext == "json") && f.exists())
+                .profile_file()
+                .filter(|file| file.exists())
                 .cloned()
                 .ok_or_else(|| other(format!("The files for \"{profile_name}\" are missing.")))?;
             let recipe = profile
@@ -1327,8 +1490,7 @@ impl Backend {
             .own_products()
             .remove(profile_name)
             .ok_or_else(|| other("Say which product this filament is first, so Toona knows what to compare it with."))?;
-        let written = std::fs::read_to_string(&own.path).ok().and_then(|text| FilamentProfile::from_json(&text).ok());
-        let printer = written.and_then(|p| p.compatible_printers.first().cloned()).ok_or_else(not_known)?;
+        let printer = studio.printers_of(&own.path, None, &studio.printers()).into_iter().next().ok_or_else(not_known)?;
         let recipe = recover_recipe(studio, catalogue, &catalogue_key, &printer, &own.path);
         Ok(Source { catalogue_key, printer, json: own.path, recipe, added: false })
     }
@@ -1340,15 +1502,13 @@ impl Backend {
         let source = self.source(&studio, &catalogue, profile_name)?;
         let filament = catalogue.filaments().iter().find(|f| f.key == source.catalogue_key);
         let recipe = source.recipe.ok_or_else(|| other("Toona can't tell what this profile is built on."))?;
-        let written = std::fs::read_to_string(&source.json)
-            .ok()
-            .and_then(|text| FilamentProfile::from_json(&text).ok())
-            .ok_or_else(|| other("That profile's file could not be read."))?;
+        let written = FilamentProfile::read(&source.json).ok_or_else(|| other("That profile's file could not be read."))?;
         let base = studio.library.resolve_filament(&recipe.parent).map(|resolved| resolved.settings).unwrap_or_default();
 
         let mut settings = Vec::new();
-        let known = |key: &str| SETTINGS.iter().find(|(name, ..)| *name == key);
-        let mut keys: Vec<&str> = SETTINGS.iter().map(|(key, ..)| *key).filter(|key| written.settings.contains_key(*key)).collect();
+        let table = settings_of(studio.library.family);
+        let known = |key: &str| table.iter().find(|(name, ..)| *name == key);
+        let mut keys: Vec<&str> = table.iter().map(|(key, ..)| *key).filter(|key| written.settings.contains_key(*key)).collect();
         // Anything else the profile changes is shown too, but not offered for editing.
         keys.extend(recipe.changes.iter().map(|c| c.key.as_str()).filter(|key| known(key).is_none() && !key.contains("gcode")));
         for key in keys {
@@ -1373,7 +1533,7 @@ impl Backend {
             profile_name: profile_name.to_string(),
             alias: preset_alias(profile_name).to_string(),
             printer: source.printer,
-            hex: profile_colour(&source.json),
+            hex: Facts::read(&source.json).hex,
             built_on: preset_alias(&recipe.parent).to_string(),
             brand: filament.map(|f| f.brand.clone()),
             product: filament.map(|f| f.name.clone()),
@@ -1391,16 +1551,13 @@ impl Backend {
         let catalogue = self.load_catalogue(Refresh::IfMissing)?;
         let source = self.source(&studio, &catalogue, profile_name)?;
         if !source.added {
-            return Err(other(format!("Toona only edits filaments it added. Edit this one in {}.", self.kind.display_name())));
+            return Err(other(format!("Toona only edits filaments it added. Edit this one in {}.", self.kind().display_name())));
         }
         let old = source.recipe.ok_or_else(|| other("Toona can't tell what this profile is built on."))?;
-        let mut profile = std::fs::read_to_string(&source.json)
-            .ok()
-            .and_then(|text| FilamentProfile::from_json(&text).ok())
-            .ok_or_else(|| other("That profile's file could not be read."))?;
+        let mut profile = FilamentProfile::read(&source.json).ok_or_else(|| other("That profile's file could not be read."))?;
 
         for edit in edits {
-            let (_, _, min, max, ..) = SETTINGS
+            let (_, _, min, max, ..) = settings_of(profile.family)
                 .iter()
                 .find(|(key, ..)| *key == edit.key)
                 .ok_or_else(|| other(format!("\"{}\" can't be edited here.", edit.key)))?;
@@ -1413,15 +1570,12 @@ impl Backend {
                 .settings
                 .get(&edit.key)
                 .filter(|value| single(value).is_some())
-                .ok_or_else(|| other(format!("\"{}\" has different values per nozzle; edit it in {}.", edit.key, self.kind.display_name())))?;
+                .ok_or_else(|| other(format!("\"{}\" has different values per nozzle; edit it in {}.", edit.key, self.kind().display_name())))?;
             let value = filled(current, text);
             profile.settings.insert(edit.key.clone(), value);
         }
 
-        let mut base = studio.library.resolve_filament(&old.parent)?.settings;
-        for key in ["compatible_printers", "filament_vendor", "filament_type"] {
-            base.remove(key);
-        }
+        let base = studio.library.base_settings(&old.parent)?;
         let edited: Vec<&str> = edits.iter().map(|edit| edit.key.as_str()).collect();
         let mut recipe = Recipe::between(&old.parent, &base, &profile.settings, |key| {
             if edited.contains(&key) {
@@ -1501,9 +1655,10 @@ fn spec_rows(
     let span = |low: Option<f64>, high: Option<f64>| Some(format!("{}–{} °C", low?, high?));
     let degrees = |value: Option<f64>| value.map(|v| format!("{v} °C"));
 
-    let nozzle = setting("nozzle_temperature");
-    // A plate the preset does not allow reads 0; the smooth plate is the usual one.
-    let bed = setting("hot_plate_temp").filter(|t| *t > 0.0).or(setting("textured_plate_temp"));
+    let keys = keys_of(built.map_or(Family::Bambu, |(profile, _)| profile.family));
+    let nozzle = setting(keys.nozzle);
+    // A plate the preset does not allow reads 0; the first one that is allowed counts.
+    let bed = keys.beds.iter().find_map(|key| setting(key).filter(|t| *t > 0.0)).or(keys.beds.last().and_then(|key| setting(key)));
     // The first value is the standard nozzle's; a printer with a second kind of nozzle lists more.
     let flow = built.and_then(|(profile, _)| first(profile.settings.get(FLOW_KEY)?));
     let density = setting("filament_density");
@@ -1567,12 +1722,6 @@ fn clean_hex(raw: Option<&str>) -> Option<String> {
     digits.chars().all(|c| c.is_ascii_hexdigit()).then(|| format!("#{}", digits.to_ascii_uppercase()))
 }
 
-/// The colour a profile file gives its filament.
-fn profile_colour(path: &std::path::Path) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    clean_hex(json.get("default_filament_colour")?.get(0)?.as_str())
-}
-
 /// What a profile file says about its filament, for listing it.
 #[derive(Default)]
 struct Facts {
@@ -1587,24 +1736,23 @@ struct Facts {
 
 impl Facts {
     fn read(path: &std::path::Path) -> Self {
-        let Some(json) = std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        else {
-            return Self::default();
-        };
+        let Some(profile) = FilamentProfile::read(path) else { return Self::default() };
+        let keys = keys_of(profile.family);
         // The first value: on a printer with two nozzles, the main one's.
         let text = |key: &str| {
-            let value = json.get(key)?;
-            let text = value.as_str().or_else(|| value.get(0)?.as_str())?.trim();
+            let value = profile.settings.get(key)?;
+            let text = value.as_str().or_else(|| value.get(0)?.as_str())?.trim().trim_matches('"');
             (!text.is_empty()).then(|| text.to_string())
         };
+        let field = |values: &[String]| values.first().map(|value| value.trim().trim_matches('"').to_string()).filter(|value| !value.is_empty());
         Self {
-            hex: clean_hex(text("default_filament_colour").as_deref()),
-            vendor: text("filament_vendor").filter(|vendor| !vendor.eq_ignore_ascii_case("generic")),
-            material: text("filament_type"),
-            nozzle_temp: text("nozzle_temperature"),
-            // The smooth plate most printers ship with, or else the textured one.
-            bed_temp: text("hot_plate_temp").or_else(|| text("textured_plate_temp")),
-            max_flow: text(FLOW_KEY),
+            hex: clean_hex(text(keys.colour).as_deref()),
+            vendor: field(&profile.filament_vendor).filter(|vendor| !vendor.eq_ignore_ascii_case("generic")),
+            material: field(&profile.filament_type),
+            nozzle_temp: text(keys.nozzle),
+            bed_temp: keys.beds.iter().find_map(|key| text(key)),
+            // PrusaSlicer writes "no limit" as 0.
+            max_flow: text(FLOW_KEY).filter(|flow| flow.parse::<f64>().map_or(true, |flow| flow > 0.0)),
         }
     }
 }
@@ -1650,11 +1798,13 @@ fn recover_recipe(
     json: &std::path::Path,
 ) -> Option<Recipe> {
     let filament = catalogue.filaments().iter().find(|f| f.key == catalogue_key)?;
-    let written = FilamentProfile::from_json(&std::fs::read_to_string(json).ok()?).ok()?;
-    let base = choose_base(&studio.library, filament, printer, None).ok()?;
-    let mut base_settings = studio.library.resolve_filament(&base.preset).ok()?.settings;
-    for key in ["compatible_printers", "filament_vendor", "filament_type"] {
-        base_settings.remove(key);
-    }
-    Some(Recipe::between(&base.preset, &base_settings, &written.settings, catalogue_layer))
+    let written = FilamentProfile::read(json)?;
+    // A PrusaSlicer preset says which system preset it was made from; a Bambu Studio one does not.
+    let parent = if written.family == Family::Prusa && studio.library.has_filament(&written.inherits) {
+        written.inherits.clone()
+    } else {
+        choose_base(&studio.library, filament, printer, None).ok()?.preset
+    };
+    let base_settings = studio.library.base_settings(&parent).ok()?;
+    Some(Recipe::between(&parent, &base_settings, &written.settings, catalogue_layer))
 }

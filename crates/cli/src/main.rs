@@ -43,6 +43,7 @@ enum SlicerArg {
     Bambu,
     /// Experimental: not verified against a real install
     Orca,
+    Prusa,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -219,6 +220,7 @@ fn open(cli: &Cli, dirs: AppDirs) -> Result<Context_> {
     let kind = match cli.slicer {
         SlicerArg::Bambu => SlicerKind::BambuStudio,
         SlicerArg::Orca => SlicerKind::OrcaSlicer,
+        SlicerArg::Prusa => SlicerKind::PrusaSlicer,
     };
     let slicer = match &cli.config_dir {
         Some(dir) => Slicer::at(kind, dir)?,
@@ -369,15 +371,18 @@ fn install_command(context: &Context_, catalogue: &Catalogue, args: &InstallArgs
         )
         .with_context(|| format!("for printer {}", printer.name))?;
         let base = choose_base(library, filament, &printer.name, args.base.as_deref())?;
-        println!(
-            "{}  (id {}, based on {}: {}, {} settings changed)",
+        let line = format!(
+            "{}  ({}based on {}: {}, {} settings changed)",
             profile.name,
-            profile.filament_id,
+            if profile.filament_id.is_empty() { String::new() } else { format!("id {}, ", profile.filament_id) },
             base.preset,
             base.source.label(),
             recipe.changes.len()
         );
-        planned.push(PlannedProfile { catalogue_key: filament.key.clone(), profile, recipe: Some(recipe) });
+        let item = PlannedProfile { catalogue_key: filament.key.clone(), printer: printer.name.clone(), profile, recipe: Some(recipe) };
+        if item.add_to(&mut planned) {
+            println!("{line}");
+        }
     }
 
     if let Some(out_dir) = &args.export {
@@ -385,7 +390,11 @@ fn install_command(context: &Context_, catalogue: &Catalogue, args: &InstallArgs
         for path in install::export_bundles(&profiles, out_dir, conf.user_id())? {
             println!("Wrote {}", path.display());
         }
-        println!("Import with File > Import > Import Configs in {}.", slicer.kind.display_name());
+        let menu = match slicer.kind.family() {
+            toona_core::Family::Bambu => "Import Configs",
+            toona_core::Family::Prusa => "Import Config Bundle",
+        };
+        println!("Import with File > Import > {menu} in {}.", slicer.kind.display_name());
         return Ok(());
     }
 
@@ -462,6 +471,7 @@ fn convert_command(context: &Context_, args: &ConvertArgs) -> Result<()> {
             );
             planned.push(PlannedProfile {
                 catalogue_key: format!("converted/{}", source.name),
+                printer: profile.compatible_printers[0].clone(),
                 profile,
                 recipe: Some(recipe),
             });

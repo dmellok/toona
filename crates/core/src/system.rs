@@ -4,10 +4,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
+use crate::prusa;
+use crate::slicer::Family;
 
 /// Filament options that hold one value per extruder variant. Checked against the
 /// profiles Bambu Studio 2.9 writes: `filament_flush_temp_fast`,
@@ -94,8 +97,13 @@ const MAX_CHAIN_DEPTH: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MachinePreset {
     pub name: String,
+    /// The model as the slicer shows it.
     pub model: String,
     pub nozzle: String,
+    /// The model as the slicer's own settings file names it. The same as `model` in Bambu Studio.
+    pub model_id: String,
+    /// A printer preset the user made, not one the slicer ships.
+    pub user: bool,
 }
 
 /// A system filament preset resolved through its whole inherits/include chain.
@@ -120,8 +128,13 @@ impl ResolvedFilament {
 pub struct SystemLibrary {
     /// Bundle version as Studio writes it into user profiles, e.g. `2.9.0.83`.
     pub version: String,
+    pub family: Family,
     filaments: HashMap<String, Map<String, Value>>,
     machines: Vec<MachinePreset>,
+    /// PrusaSlicer only: the printer presets, for working out which filaments show for which.
+    printer_presets: HashMap<String, Map<String, Value>>,
+    /// PrusaSlicer only: the filament presets that show for each printer asked about so far.
+    shown: Mutex<HashMap<String, Arc<Vec<String>>>>,
 }
 
 impl SystemLibrary {
@@ -159,12 +172,38 @@ impl SystemLibrary {
                     name: name.to_string(),
                     model: model.to_string(),
                     nozzle: nozzle.to_string(),
+                    model_id: model.to_string(),
+                    user: false,
                 });
             }
         }
         machines.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Ok(Self { version, filaments, machines })
+        Ok(Self { version, filaments, machines, ..Self::default() })
+    }
+
+    /// Loads PrusaSlicer's vendor bundles and the user's printer presets from its settings folder.
+    pub fn load_prusa(config_dir: &Path) -> Result<Self> {
+        let loaded = prusa::load(config_dir)?;
+        let machines = loaded
+            .printers
+            .into_iter()
+            .map(|printer| MachinePreset {
+                name: printer.name,
+                model: printer.model,
+                nozzle: printer.nozzle,
+                model_id: printer.model_id,
+                user: printer.user,
+            })
+            .collect();
+        Ok(Self {
+            version: loaded.version,
+            family: Family::Prusa,
+            filaments: loaded.filaments,
+            machines,
+            printer_presets: loaded.printer_presets,
+            shown: Mutex::default(),
+        })
     }
 
     pub fn machines(&self) -> &[MachinePreset] {
@@ -179,8 +218,60 @@ impl SystemLibrary {
         self.filaments.contains_key(name)
     }
 
+    pub(crate) fn printer_view<'a>(&'a self, printer: &'a str) -> prusa::PrinterView<'a> {
+        prusa::PrinterView { presets: &self.printer_presets, name: printer }
+    }
+
+    /// Whether a filament with these settings shows for `printer` in PrusaSlicer.
+    pub fn shows_for(&self, settings: &BTreeMap<String, Value>, printer: &str) -> bool {
+        let text = |key: &str| settings.get(key).and_then(Value::as_str).unwrap_or_default();
+        let view = prusa::PrinterView { presets: &self.printer_presets, name: printer };
+        prusa::compatible(text("compatible_printers"), text("compatible_printers_condition"), &view)
+    }
+
+    /// PrusaSlicer's system filament presets that show for `printer`: its own vendor's
+    /// first, then the generic templates, each sorted by name.
+    fn shown_for_printer(&self, printer: &str) -> Arc<Vec<String>> {
+        let mut shown = self.shown.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(known) = shown.get(printer) {
+            return known.clone();
+        }
+        let view = prusa::PrinterView { presets: &self.printer_presets, name: printer };
+        let value = |name: &str, key: &str| prusa::lookup(&self.filaments, name, key).unwrap_or_default();
+        // Thousands of presets share a few hundred conditions.
+        let mut answers: HashMap<(&str, &str), bool> = HashMap::new();
+        let mut names: Vec<String> = self
+            .filaments
+            .keys()
+            .filter(|name| !name.starts_with('*'))
+            .filter(|name| {
+                let asked = (value(name, "compatible_printers"), value(name, "compatible_printers_condition"));
+                *answers.entry(asked).or_insert_with(|| prusa::compatible(asked.0, asked.1, &view))
+            })
+            .cloned()
+            .collect();
+        names.sort_by(|a, b| a.ends_with(prusa::TEMPLATE_SUFFIX).cmp(&b.ends_with(prusa::TEMPLATE_SUFFIX)).then_with(|| a.cmp(b)));
+        let names = Arc::new(names);
+        shown.insert(printer.to_string(), names.clone());
+        names
+    }
+
+    /// A system filament preset's settings as a profile built on it starts out: resolved
+    /// through its whole chain, without the fields a profile keeps apart from its settings.
+    pub fn base_settings(&self, name: &str) -> Result<BTreeMap<String, Value>> {
+        let mut settings = self.resolve_filament(name)?.settings;
+        for key in self.family.field_keys() {
+            settings.remove(*key);
+        }
+        Ok(settings)
+    }
+
     /// Selectable system filament presets that list `printer` as compatible, sorted.
     pub fn filaments_for_printer(&self, printer: &str) -> Vec<&str> {
+        if self.family == Family::Prusa {
+            let shown = self.shown_for_printer(printer);
+            return shown.iter().filter_map(|name| self.filaments.get_key_value(name).map(|(key, _)| key.as_str())).collect();
+        }
         let mut names: Vec<&str> = self
             .filaments
             .iter()
@@ -240,8 +331,16 @@ impl SystemLibrary {
             .get(name)
             .ok_or_else(|| Error::PresetNotFound(name.to_string()))?;
 
-        let (mut settings, mut filament_id) = match preset.get("inherits").and_then(Value::as_str) {
-            Some(parent) if !parent.is_empty() => self.resolve_chain(parent, depth + 1)?,
+        let (mut settings, mut filament_id) = match preset.get("inherits") {
+            Some(Value::String(parent)) if !parent.is_empty() => self.resolve_chain(parent, depth + 1)?,
+            // PrusaSlicer: several parents, each laid over the ones before it.
+            Some(Value::Array(parents)) => {
+                let mut settings = BTreeMap::new();
+                for parent in parents.iter().filter_map(Value::as_str) {
+                    settings.extend(self.resolve_chain(parent, depth + 1)?.0);
+                }
+                (settings, None)
+            }
             _ => (BTreeMap::new(), None),
         };
 

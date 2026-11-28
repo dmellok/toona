@@ -24,23 +24,25 @@ const rank = (kind: Kind) => STACK.length - STACK.indexOf(kind);
 
 const shown = (setting: Setting, value: string) => `${value}${setting.unit}`;
 
-/** "Bambu Lab X2D 0.4 nozzle" as "X2D · 0.4 mm". */
+/** "Bambu Lab X2D 0.4 nozzle" as "X2D · 0.4 mm". PrusaSlicer leaves the nozzle out of a preset's name when it is the usual one. */
 function shortPrinter(printer: string): string {
-  const match = printer.match(/^(?:Bambu Lab )?(.*?) ([\d.]+) nozzle$/);
-  return match ? `${match[1]} · ${match[2]} mm` : printer;
+  const short = printer.replace(/^(?:Bambu Lab|Original Prusa) /, "");
+  const match = short.match(/^(.*?) ((?:HF)?[\d.]+) nozzle$/);
+  return match ? `${match[1]} · ${match[2]} mm` : short;
 }
 
 /** The columns of the layers view: the settings people look for, then anything else that was changed. */
 const COLUMNS: { label: string; keys: string[] }[] = [
   { label: "Density", keys: ["filament_density"] },
   { label: "Nozzle range", keys: ["nozzle_temperature_range_low", "nozzle_temperature_range_high"] },
-  { label: "Nozzle", keys: ["nozzle_temperature"] },
-  { label: "Flow", keys: ["filament_flow_ratio"] },
+  { label: "Nozzle", keys: ["nozzle_temperature", "temperature"] },
+  { label: "Flow", keys: ["filament_flow_ratio", "extrusion_multiplier"] },
   { label: "Max speed", keys: ["filament_max_volumetric_speed"] },
   { label: "Pressure adv.", keys: ["pressure_advance"] },
   { label: "Smooth bed", keys: ["hot_plate_temp"] },
+  { label: "Bed", keys: ["bed_temperature"] },
   { label: "Textured bed", keys: ["textured_plate_temp"] },
-  { label: "Fan", keys: ["fan_max_speed"] },
+  { label: "Fan", keys: ["fan_max_speed", "max_fan_speed"] },
 ];
 
 /** A setting's value; a colour code gets a dot of that colour beside it, since the pill itself is the layer's colour. */

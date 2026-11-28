@@ -31,6 +31,8 @@ export type Sheet =
 interface Props {
   sheet: Sheet | null;
   studioName: string;
+  /** The slicer's id; its wording differs where the slicers do. */
+  slicerId: string;
   close: () => void;
 }
 
@@ -45,7 +47,8 @@ function size(bytes: number): string {
   return bytes < 1_000_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
-export function Sheets({ sheet, studioName, close }: Props) {
+export function Sheets({ sheet, studioName, slicerId, close }: Props) {
+  const prusa = slicerId === "prusa-slicer";
   const [dontAsk, setDontAsk] = useState(false);
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
@@ -83,7 +86,14 @@ export function Sheets({ sheet, studioName, close }: Props) {
 
   if (!sheet) return null;
 
-  const where = (
+  const where = prusa ? (
+    <ol className="steps">
+      <li>
+        <span className="mono">01</span>
+        <span>The filament dropdown, under User presets.</span>
+      </li>
+    </ol>
+  ) : (
     <ol className="steps">
       <li>
         <span className="mono">01</span>
@@ -158,7 +168,7 @@ export function Sheets({ sheet, studioName, close }: Props) {
           <div className="done-body">
             <h2 id="sheet-title">Added to {studioName}</h2>
             <p>
-              Open {studioName} and look for <strong>{sheet.alias}</strong> in two places.
+              Open {studioName} and look for <strong>{sheet.alias}</strong> {prusa ? "here." : "in two places."}
             </p>
             {where}
             {sheet.backup && <div className="fine selectable">Backup: {sheet.backup}</div>}
@@ -256,10 +266,14 @@ export function Sheets({ sheet, studioName, close }: Props) {
       body = (
         <>
           <h2 id="sheet-title">Bundle saved</h2>
-          <p>
-            In {studioName}, choose File, Import, Import Configs and pick the file. Imported profiles don't show in
-            the AMS list; adding directly does.
-          </p>
+          {prusa ? (
+            <p>In {studioName}, choose File, Import, Import Config Bundle and pick the file.</p>
+          ) : (
+            <p>
+              In {studioName}, choose File, Import, Import Configs and pick the file. Imported profiles don't show in
+              the AMS list; adding directly does.
+            </p>
+          )}
           <div className="fine selectable">{sheet.files.join("\n")}</div>
           <div className="sheet-buttons">
             <button type="button" onClick={() => void api.reveal(sheet.files[0])}>
@@ -358,7 +372,7 @@ export function Sheets({ sheet, studioName, close }: Props) {
         <>
           <h2 id="sheet-title">Backups</h2>
           <p>
-            Before Toona changes anything, it copies {studioName}'s whole user folder. Restoring one puts every
+            Before Toona changes anything, it copies {studioName}'s whole {prusa ? "filament" : "user"} folder. Restoring one puts every
             profile back as it was then, yours included. How things are now is backed up first, so a restore can be
             undone too.
           </p>

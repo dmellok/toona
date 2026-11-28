@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::error::{Error, Result};
 use crate::profile::{FilamentProfile, PresetInfo};
 use crate::recipe::Recipe;
-use crate::slicer::{AppConf, Slicer};
+use crate::slicer::{AppConf, Family, Slicer};
 use crate::system::preset_alias;
 
 const MANIFEST_FILE: &str = "manifest.json";
@@ -81,6 +81,18 @@ pub struct Manifest {
     pub profiles: Vec<InstalledProfile>,
 }
 
+impl InstalledProfile {
+    /// The file that holds the profile itself, among the files created for it.
+    pub fn profile_file(&self) -> Option<&PathBuf> {
+        self.files.iter().find(|file| is_profile_file(file))
+    }
+}
+
+/// Whether a path is a profile's own file (`.json` or PrusaSlicer's `.ini`), not a sidecar.
+fn is_profile_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| ext == "json" || ext == "ini")
+}
+
 impl Manifest {
     pub fn load(dirs: &AppDirs) -> Result<Self> {
         let path = dirs.manifest_path();
@@ -106,8 +118,22 @@ impl Manifest {
 pub struct PlannedProfile {
     pub catalogue_key: String,
     pub profile: FilamentProfile,
+    /// The printer preset it was built for. A PrusaSlicer preset may show for others too.
+    pub printer: String,
     /// Recorded in the manifest with the profile.
     pub recipe: Option<Recipe>,
+}
+
+impl PlannedProfile {
+    /// Adds this to a plan, unless a profile of that name is already in it: one
+    /// PrusaSlicer preset serves every printer its base preset does. Says whether it was added.
+    pub fn add_to(self, planned: &mut Vec<PlannedProfile>) -> bool {
+        let new = !planned.iter().any(|other| other.profile.name == self.profile.name);
+        if new {
+            planned.push(self);
+        }
+        new
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -168,22 +194,26 @@ fn install_checked(
     let mut targets = Vec::new();
     for item in planned {
         item.profile.validate()?;
-        let json_path = target_dir.join(format!("{}.json", item.profile.file_stem()));
-        let info_path = json_path.with_extension("info");
+        let profile_path = target_dir.join(format!("{}.{}", item.profile.file_stem(), item.profile.extension()));
+        // Bambu Studio keeps what it knows about syncing a profile in a file next to it.
+        let info_path = (item.profile.family == Family::Bambu).then(|| profile_path.with_extension("info"));
         // Any preset of that name the tool did not write belongs to the user.
         let clash = existing
             .iter()
             .find(|f| f.name == item.profile.name && !manifest.owns(&f.path))
             .map(|f| f.path.clone())
-            .or_else(|| [&json_path, &info_path].into_iter().find(|p| p.exists() && !manifest.owns(p)).cloned());
+            .or_else(|| {
+                [Some(&profile_path), info_path.as_ref()].into_iter().flatten().find(|p| p.exists() && !manifest.owns(p)).cloned()
+            });
         if let Some(path) = clash {
             return Err(Error::ForeignFile { path });
         }
-        targets.push((item, json_path, info_path));
+        targets.push((item, profile_path, info_path));
     }
 
     let will_cloud_sync = conf.uploads_new_presets();
-    let files: Vec<PathBuf> = targets.iter().flat_map(|(_, json, info)| [json.clone(), info.clone()]).collect();
+    let files: Vec<PathBuf> =
+        targets.iter().flat_map(|(_, profile, info)| std::iter::once(profile.clone()).chain(info.clone())).collect();
     if options.dry_run {
         return Ok(InstallReport { dry_run: true, files, backup: None, will_cloud_sync });
     }
@@ -198,9 +228,11 @@ fn install_checked(
     let backup = backup_noted(slicer, dirs, &format!("Before adding {what}"))?;
     fs::create_dir_all(&target_dir).map_err(Error::write(&target_dir))?;
     let installed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    for (item, json_path, info_path) in &targets {
-        write_atomically(json_path, item.profile.to_json().as_bytes())?;
-        write_atomically(info_path, PresetInfo::new_unsynced().to_string().as_bytes())?;
+    for (item, profile_path, info_path) in &targets {
+        write_atomically(profile_path, item.profile.file_text().as_bytes())?;
+        if let Some(info_path) = info_path {
+            write_atomically(info_path, PresetInfo::new_unsynced().to_string().as_bytes())?;
+        }
 
         manifest.profiles.retain(|p| !(p.slicer == slicer.kind.id() && p.profile_name == item.profile.name));
         manifest.profiles.push(InstalledProfile {
@@ -208,9 +240,9 @@ fn install_checked(
             alias: item.profile.alias().to_string(),
             profile_name: item.profile.name.clone(),
             filament_id: item.profile.filament_id.clone(),
-            printer: item.profile.compatible_printers[0].clone(),
+            printer: item.printer.clone(),
             slicer: slicer.kind.id().to_string(),
-            files: vec![json_path.clone(), info_path.clone()],
+            files: std::iter::once(profile_path.clone()).chain(info_path.clone()).collect(),
             installed_at: installed_at.clone(),
             recipe: item.recipe.clone(),
         });
@@ -261,7 +293,7 @@ fn uninstall_checked(slicer: &Slicer, dirs: &AppDirs, query: &str, slicer_runnin
         let synced = profile
             .files
             .iter()
-            .filter(|f| f.extension().is_some_and(|ext| ext == "json"))
+            .filter(|f| is_profile_file(f))
             .filter_map(|f| Slicer::preset_info(f))
             .any(|info| info.is_cloud_synced());
         if synced {
@@ -350,7 +382,7 @@ fn remove_many_checked(
     for (name, files, installed) in doomed {
         let synced = files
             .iter()
-            .filter(|f| f.extension().is_some_and(|ext| ext == "json"))
+            .filter(|f| is_profile_file(f))
             .filter_map(|f| Slicer::preset_info(f))
             .any(|info| info.is_cloud_synced());
         if synced {
@@ -405,14 +437,14 @@ fn update_checked(
     let json_path = manifest.profiles[index]
         .files
         .iter()
-        .find(|f| f.extension().is_some_and(|ext| ext == "json") && f.exists())
+        .find(|f| is_profile_file(f) && f.exists())
         .cloned()
         .ok_or_else(not_installed)?;
-    let info_path = json_path.with_extension("info");
+    let info_path = (profile.family == Family::Bambu).then(|| json_path.with_extension("info"));
     let mut info = Slicer::preset_info(&json_path).unwrap_or_else(PresetInfo::new_unsynced);
 
     let will_cloud_sync = conf.uploads_new_presets();
-    let files = vec![json_path.clone(), info_path.clone()];
+    let files: Vec<PathBuf> = std::iter::once(json_path.clone()).chain(info_path.clone()).collect();
     if options.dry_run {
         return Ok(InstallReport { dry_run: true, files, backup: None, will_cloud_sync });
     }
@@ -430,8 +462,10 @@ fn update_checked(
     if info.is_cloud_synced() {
         info.sync_info = "update".to_string();
     }
-    write_atomically(&json_path, profile.to_json().as_bytes())?;
-    write_atomically(&info_path, info.to_string().as_bytes())?;
+    write_atomically(&json_path, profile.file_text().as_bytes())?;
+    if let Some(info_path) = &info_path {
+        write_atomically(info_path, info.to_string().as_bytes())?;
+    }
     manifest.profiles[index].recipe = recipe;
     manifest.save(dirs)?;
     Ok(InstallReport { dry_run: false, files, backup: Some(backup), will_cloud_sync })
@@ -564,8 +598,9 @@ fn restore_checked(slicer: &Slicer, dirs: &AppDirs, backup: &Path, slicer_runnin
 
     // Unpack beside the user folder first, so a broken archive leaves everything as it is.
     let user_root = slicer.user_root();
-    let incoming = user_root.with_file_name("user.toona-restoring");
-    let outgoing = user_root.with_file_name("user.toona-replaced");
+    let folder = user_root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let incoming = user_root.with_file_name(format!("{folder}.toona-restoring"));
+    let outgoing = user_root.with_file_name(format!("{folder}.toona-replaced"));
     for leftover in [&incoming, &outgoing] {
         if leftover.exists() {
             fs::remove_dir_all(leftover).map_err(Error::write(leftover))?;
@@ -612,14 +647,40 @@ fn restore_checked(slicer: &Slicer, dirs: &AppDirs, backup: &Path, slicer_runnin
     Ok(safety)
 }
 
-/// Writes one `<filament name>.bbsflmt` per filament into `out_dir`, for
-/// File > Import > Import Configs. Touches nothing in the slicer's folder.
+/// Writes one `<filament name>.ini` config bundle per filament into `out_dir`, for
+/// PrusaSlicer's File > Import > Import Config Bundle.
+fn export_config_bundles(profiles: &[FilamentProfile], out_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut by_filament: BTreeMap<&str, Vec<&FilamentProfile>> = BTreeMap::new();
+    for profile in profiles {
+        by_filament.entry(profile.alias()).or_default().push(profile);
+    }
+    let mut written = Vec::new();
+    for (alias, group) in by_filament {
+        let mut text = String::new();
+        for profile in group {
+            // A bundle is the presets' own files, each under a heading that names it.
+            let body: String = profile.to_ini().lines().skip(1).map(|line| format!("{line}\n")).collect();
+            text.push_str(&format!("[filament:{}]\n{body}\n", profile.name));
+        }
+        let path = out_dir.join(format!("{alias}.ini"));
+        fs::write(&path, text).map_err(Error::write(&path))?;
+        written.push(path);
+    }
+    Ok(written)
+}
+
+/// Writes one importable file per filament into `out_dir`: a `.bbsflmt` for Bambu
+/// Studio's File > Import > Import Configs, or a config bundle for PrusaSlicer.
+/// Touches nothing in the slicer's folder.
 pub fn export_bundles(profiles: &[FilamentProfile], out_dir: &Path, user_id: Option<&str>) -> Result<Vec<PathBuf>> {
     let failed = |error: &dyn std::fmt::Display| Error::Other(format!("bundle export failed: {error}"));
     for profile in profiles {
         profile.validate()?;
     }
     fs::create_dir_all(out_dir).map_err(Error::write(out_dir))?;
+    if profiles.iter().any(|profile| profile.family == Family::Prusa) {
+        return export_config_bundles(profiles, out_dir);
+    }
 
     let mut by_filament: BTreeMap<&str, Vec<&FilamentProfile>> = BTreeMap::new();
     for profile in profiles {
@@ -706,7 +767,7 @@ mod tests {
         profile.name = format!("{alias} @Bambu Lab X2D 0.4 nozzle");
         profile.filament_settings_id = vec![profile.name.clone()];
         profile.filament_id = crate::profile::user_filament_id(alias, conf.user_id());
-        PlannedProfile { catalogue_key: "test/PLA/test".into(), profile, recipe: None }
+        PlannedProfile { catalogue_key: "test/PLA/test".into(), printer: profile.compatible_printers[0].clone(), profile, recipe: None }
     }
 
     fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
@@ -995,4 +1056,97 @@ mod tests {
             "eSUN/Test PLA @Bambu Lab X2D 0.4 nozzle.json"
         );
     }
+    fn prusa_slicer(temp: &Path) -> Slicer {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/PrusaSlicer");
+        let target = temp.join("PrusaSlicer");
+        copy_dir(&source, &target);
+        Slicer::at(SlicerKind::PrusaSlicer, target).unwrap()
+    }
+
+    /// The user's own preset from the fixture under a new name, standing in for a generated one.
+    fn prusa_planned(slicer: &Slicer, name: &str) -> PlannedProfile {
+        let source = slicer.user_root().join("My Own PLA.ini");
+        let profile = FilamentProfile::from_ini(name, &fs::read_to_string(source).unwrap());
+        PlannedProfile {
+            catalogue_key: "test/PLA/test".into(),
+            printer: "Original Prusa i3 MK3S & MK3S+".into(),
+            profile,
+            recipe: None,
+        }
+    }
+
+    #[test]
+    fn a_prusaslicer_preset_is_one_ini_file_and_comes_out_again_cleanly() {
+        let temp = tempfile::tempdir().unwrap();
+        let slicer = prusa_slicer(temp.path());
+        let conf = slicer.conf().unwrap();
+        let dirs = AppDirs::under(&temp.path().join("toona"));
+        let before = snapshot(&slicer.config_dir);
+        // "2.0" in a name must not be taken for a file extension.
+        let planned = [prusa_planned(&slicer, "Test PLA 2.0 @MK4S")];
+
+        let running = install_checked(&slicer, &conf, &dirs, &planned, InstallOptions::default(), true);
+        assert!(matches!(running, Err(Error::SlicerRunning("PrusaSlicer"))));
+        assert_eq!(snapshot(&slicer.config_dir), before);
+
+        let report = install_checked(&slicer, &conf, &dirs, &planned, InstallOptions::default(), false).unwrap();
+        let file = slicer.user_root().join("Test PLA 2.0 @MK4S.ini");
+        assert_eq!(report.files, [file.clone()], "no sidecar: PrusaSlicer has no cloud copy to track");
+        assert!(!report.will_cloud_sync);
+        assert_eq!(fs::read_to_string(&file).unwrap(), planned[0].profile.to_ini());
+        assert!(!file.with_extension("info").exists());
+
+        let manifest = Manifest::load(&dirs).unwrap();
+        assert_eq!(manifest.profiles.len(), 1);
+        let installed = &manifest.profiles[0];
+        assert_eq!(installed.slicer, "prusa-slicer");
+        assert_eq!(installed.alias, "Test PLA 2.0");
+        assert_eq!(installed.printer, "Original Prusa i3 MK3S & MK3S+");
+        assert_eq!(installed.profile_file(), Some(&file));
+        assert!(installed.filament_id.is_empty());
+
+        // The user's own preset of that name is never written over.
+        let clash = [prusa_planned(&slicer, "My Own PLA")];
+        let refused = install_checked(&slicer, &conf, &dirs, &clash, InstallOptions::default(), false);
+        assert!(matches!(refused, Err(Error::ForeignFile { .. })));
+
+        // A setting changed in place keeps the file and its name.
+        let mut edited = planned[0].profile.clone();
+        edited.settings.insert("temperature".into(), "220".into());
+        let updated = update_checked(&slicer, &conf, &dirs, &edited, None, InstallOptions::default(), false).unwrap();
+        assert_eq!(updated.files, [file.clone()]);
+        assert_eq!(FilamentProfile::read(&file).unwrap().settings["temperature"], "220");
+
+        // What Toona added and what the user made go out together, behind one backup.
+        let names = ["Test PLA 2.0 @MK4S".to_string(), "My Own PLA".to_string()];
+        let removed = remove_many_checked(&slicer, &conf, &dirs, &names, false).unwrap();
+        assert_eq!(removed.removed.len(), 2);
+        assert!(removed.cloud_synced.is_empty());
+        assert!(slicer.user_filaments(&conf).unwrap().is_empty());
+        assert!(Manifest::load(&dirs).unwrap().profiles.is_empty());
+
+        // Restoring that backup puts back the files and Toona's record of its own.
+        restore_checked(&slicer, &dirs, &removed.backup.unwrap(), false).unwrap();
+        let back: Vec<String> = slicer.user_filaments(&conf).unwrap().into_iter().map(|f| f.name).collect();
+        assert_eq!(back, ["My Own PLA", "Test PLA 2.0 @MK4S"]);
+        assert_eq!(Manifest::load(&dirs).unwrap().profiles.len(), 1);
+        // Only the filament folder is swapped; the rest of PrusaSlicer's settings are as they were.
+        assert!(slicer.conf_path().exists() && slicer.config_dir.join("vendor/PrusaResearch.ini").exists());
+        assert!(!slicer.config_dir.join("filament.toona-restoring").exists() && !slicer.config_dir.join("filament.toona-replaced").exists());
+    }
+
+    #[test]
+    fn a_prusaslicer_export_is_a_config_bundle_with_one_section_per_preset() {
+        let temp = tempfile::tempdir().unwrap();
+        let slicer = prusa_slicer(temp.path());
+        let profiles = [prusa_planned(&slicer, "Test PLA").profile, prusa_planned(&slicer, "Test PLA @MK4S").profile];
+        let written = export_bundles(&profiles, &temp.path().join("out"), None).unwrap();
+        assert_eq!(written, [temp.path().join("out/Test PLA.ini")]);
+        let text = fs::read_to_string(&written[0]).unwrap();
+        assert!(text.starts_with("[filament:Test PLA]\nbed_temperature = 65\n"));
+        assert!(text.contains("\n\n[filament:Test PLA @MK4S]\n"));
+        assert!(!text.contains("generated by"));
+        assert_eq!(snapshot(&slicer.config_dir).len(), snapshot(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/PrusaSlicer")).len());
+    }
+
 }

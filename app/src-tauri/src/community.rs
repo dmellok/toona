@@ -21,8 +21,14 @@ const DEFAULT_API: &str = "https://api.toona.wiki";
 /// printer do anything, and the rest say what a profile is, not how it prints.
 const NEVER_SHARED: &[&str] = &[
     "default_filament_colour",
+    "filament_colour",
     "compatible_printers",
+    "compatible_printers_condition",
     "compatible_prints",
+    "compatible_prints_condition",
+    "filament_notes",
+    "filament_cost",
+    "filament_spool_weight",
     "filament_vendor",
     "filament_type",
     "filament_settings_id",

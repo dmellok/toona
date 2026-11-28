@@ -12,8 +12,19 @@ export interface Printer {
   selected: boolean;
 }
 
+/** A slicer Toona can work with. */
+export interface SlicerChoice {
+  id: string;
+  name: string;
+  /** Its settings folder is on this computer. */
+  found: boolean;
+}
+
 export interface Status {
   slicer: string;
+  /** Which of `slicers` is being worked with. */
+  id: string;
+  slicers: SlicerChoice[];
   found: boolean;
   running: boolean;
   cloud_sync: boolean;
@@ -455,9 +466,13 @@ function mockDetail(detail: Detail, base: string | null, colour: string | null, 
 export const api = {
   status: async (): Promise<Status> => {
     if (inApp) return invoke("status");
-    const status = await mock<Status>("status");
+    // Mock files from before there was a choice of slicer say nothing about it.
+    const loaded = await mock<Omit<Status, "id" | "slicers"> & Partial<Pick<Status, "id" | "slicers">>>("status");
+    const status: Status = { id: "bambu-studio", slicers: [], ...loaded };
     return mockClosed ? { ...status, running: false } : status;
   },
+  /** Switches to another slicer; the answer is its status. */
+  setSlicer: (id: string): Promise<Status> => (inApp ? invoke("set_slicer", { id }) : api.status()),
   catalogue: (refresh: boolean): Promise<CatalogueData> =>
     inApp ? invoke("catalogue", { refresh }) : mock("catalogue"),
   detail: (

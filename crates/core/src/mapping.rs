@@ -9,7 +9,7 @@ use crate::recipe::{catalogue_layer, Change, Layer, Recipe};
 use crate::catalogue::{CatalogueFilament, MaterialClass, Variant};
 use crate::error::{Error, Result};
 use crate::profile::{hashed_filament_id, sanitize_alias, FilamentProfile};
-use crate::slicer::UserFilament;
+use crate::slicer::{Family, UserFilament};
 use crate::system::{preset_alias, SystemLibrary};
 
 /// Diameter Bambu printers use, in mm.
@@ -55,6 +55,33 @@ pub fn profile_alias(filament: &CatalogueFilament, variant: Option<&Variant>) ->
         parts.push(&variant.name);
     }
     sanitize_alias(&parts.join(" "))
+}
+
+/// PrusaSlicer's presets to try for a filament, closest first. It ships generic presets
+/// for only a few materials; for the others, Prusa's own filament of that material is the
+/// nearest starting point there is.
+fn prusa_base_candidates(filament: &CatalogueFilament) -> Vec<&'static str> {
+    let name = filament.name.to_lowercase();
+    let has_trait = |t: &str| filament.traits.contains(t);
+    let named = |words: &[&str]| words.iter().any(|w| name.contains(w));
+    let carbon = has_trait("contains_carbon_fiber") || named(&["carbon", "-cf", " cf"]);
+    let silk = has_trait("silk") || named(&["silk"]);
+
+    match filament.material.to_uppercase().as_str() {
+        "PLA" if silk => vec!["Generic PLA Silk", "Generic PLA"],
+        "PLA" | "PHA" => vec!["Generic PLA"],
+        "PETG" | "PET" | "CPE" | "PCTG" => vec!["Generic PETG"],
+        "ABS" => vec!["Generic ABS"],
+        "ASA" => vec!["Generic ASA", "Prusament ASA", "Generic ABS"],
+        "TPU" | "TPE" | "TPC" | "PEBA" => vec!["Generic FLEX"],
+        "PC" if carbon => vec!["Prusament PC Blend Carbon Fiber", "Prusament PC Blend"],
+        "PC" => vec!["Generic PC", "Prusament PC Blend"],
+        "PA" | "PA6" | "PA66" | "PA11" | "PA12" if carbon => vec!["Prusament PA11 Carbon Fiber"],
+        "PVA" | "BVOH" => vec!["Generic PVA"],
+        "PVB" => vec!["Prusament PVB"],
+        "HIPS" => vec!["Generic HIPS"],
+        _ => Vec::new(),
+    }
 }
 
 /// System preset aliases to try for a filament, closest first.
@@ -126,12 +153,17 @@ pub struct BaseChoice {
     pub source: BaseSource,
 }
 
-/// Slicer keys under which the catalogue links products to Bambu-family presets.
-const LINKED_SLICERS: &[&str] = &["bambustudio", "orcaslicer"];
+/// Slicer keys under which the catalogue links products to a family's presets.
+fn linked_slicers(family: Family) -> &'static [&'static str] {
+    match family {
+        Family::Bambu => &["bambustudio", "orcaslicer"],
+        Family::Prusa => &["prusaslicer"],
+    }
+}
 
 /// Names a slicer may ship a vendor-tuned preset for this product under.
-fn vendor_preset_names(filament: &CatalogueFilament) -> Vec<String> {
-    let mut names: Vec<String> = LINKED_SLICERS
+fn vendor_preset_names(filament: &CatalogueFilament, family: Family) -> Vec<String> {
+    let mut names: Vec<String> = linked_slicers(family)
         .iter()
         .filter_map(|slicer| filament.slicer_profiles.get(*slicer).cloned())
         .collect();
@@ -162,7 +194,7 @@ pub fn choose_base(
             .ok_or_else(|| Error::BaseNotForPrinter { base: alias.to_string(), printer: printer.to_string() });
     }
 
-    let vendor_tuned = vendor_preset_names(filament).into_iter().find_map(|wanted| {
+    let vendor_tuned = vendor_preset_names(filament, library.family).into_iter().find_map(|wanted| {
         for_printer
             .iter()
             .find(|name| {
@@ -175,7 +207,11 @@ pub fn choose_base(
         return Ok(BaseChoice { preset, source: BaseSource::VendorTuned });
     }
 
-    base_candidates(filament)
+    let candidates = match library.family {
+        Family::Bambu => base_candidates(filament),
+        Family::Prusa => prusa_base_candidates(filament),
+    };
+    candidates
         .into_iter()
         .find_map(|alias| library.filament_by_alias(alias, printer))
         .map(|preset| BaseChoice { preset: preset.to_string(), source: BaseSource::Generic })
@@ -199,13 +235,16 @@ pub fn build_profile_with_recipe(
     if library.machine(request.printer).is_none() {
         return Err(Error::PrinterNotFound(request.printer.to_string()));
     }
-    // Bambu Studio and OrcaSlicer are FDM slicers. A resin slicer would get its own builder.
+    // These are FDM slicers' filament presets. A resin slicer would get its own builder.
     if filament.class != MaterialClass::Filament {
         return Err(Error::UnsupportedMaterialClass {
             product: format!("{} {}", filament.brand, filament.name),
             class: filament.class.label(),
-            slicer: "Bambu Studio",
+            slicer: library.family.slicer_name(),
         });
+    }
+    if library.family == Family::Prusa {
+        return build_prusa_profile(library, request);
     }
     if !filament.diameters.is_empty() && !filament.diameters.iter().any(|d| is_supported_diameter(*d)) {
         return Err(Error::UnsupportedDiameter(format!("{} {}", filament.brand, filament.name)));
@@ -255,6 +294,7 @@ pub fn build_profile_with_recipe(
         .unwrap_or_else(|| profile_alias(filament, request.variant));
     let name = format!("{alias} @{}", request.printer);
     let profile = FilamentProfile {
+        family: Family::Bambu,
         filament_id: filament_id_for(&alias, request.user_id, request.existing),
         filament_settings_id: vec![name.clone()],
         name,
@@ -268,6 +308,129 @@ pub fn build_profile_with_recipe(
     };
     profile.validate()?;
     Ok((profile, recipe))
+}
+
+/// The PrusaSlicer preset for a filament on a printer: the system preset that shows for
+/// that printer, flattened, with what the catalogue knows laid over it. It keeps the
+/// base's own printer condition, so it shows for exactly the printers its base shows for,
+/// and is named after the base's `@` suffix the way PrusaSlicer's own presets are.
+fn build_prusa_profile(library: &SystemLibrary, request: &ProfileRequest) -> Result<(FilamentProfile, Recipe)> {
+    let filament = request.filament;
+    let product = || format!("{} {}", filament.brand, filament.name);
+    let base_name = choose_base(library, filament, request.printer, request.base)?.preset;
+    let base = library.resolve_filament(&base_name)?;
+    let filament_type = base
+        .first_string("filament_type")
+        .ok_or_else(|| Error::Other(format!("{base_name} has no filament_type")))?
+        .to_string();
+    let base_vendor = base.first_string("filament_vendor").map(str::to_string);
+    let base_settings = library.base_settings(&base_name)?;
+    let mut settings = base_settings.clone();
+
+    // The printer decides the diameter, and the base preset is made for that printer.
+    let diameter = number(&settings, "filament_diameter").unwrap_or(SUPPORTED_DIAMETER);
+    if !filament.diameters.is_empty() && !filament.diameters.iter().any(|d| (d - diameter).abs() < 0.01) {
+        return Err(Error::UnsupportedDiameter(product()));
+    }
+    apply_prusa_values(&mut settings, filament, request.variant);
+
+    let mut recipe = Recipe::between(&base_name, &base_settings, &settings, catalogue_layer);
+    if base_vendor.as_deref() != Some(filament.brand.as_str()) {
+        recipe.changes.push(Change {
+            key: "filament_vendor".into(),
+            layer: Layer::Manufacturer,
+            from: base_vendor.map(Value::String),
+            to: Value::String(filament.brand.clone()),
+        });
+        recipe.changes.sort_by(|a, b| a.key.cmp(&b.key));
+    }
+
+    let alias = request
+        .alias
+        .map(crate::profile::sanitize_prusa_name)
+        .filter(|alias| !alias.is_empty())
+        .unwrap_or_else(|| crate::profile::sanitize_prusa_name(&profile_alias(filament, request.variant)));
+    // "Generic PLA @MK4S HF0.4" gives "<filament> @MK4S HF0.4"; a template's mark is not a printer.
+    let suffix = base_name
+        .split_once('@')
+        .map(|(_, suffix)| suffix.trim())
+        .filter(|suffix| !suffix.is_empty() && !base_name.ends_with(crate::prusa::TEMPLATE_SUFFIX));
+    let name = match suffix {
+        Some(suffix) => format!("{alias} @{suffix}"),
+        None => alias.clone(),
+    };
+    if library.has_filament(&name) {
+        return Err(Error::Other(format!(
+            "PrusaSlicer already has a preset of its own called \"{name}\". Pick a colour, or give yours another name."
+        )));
+    }
+    let profile = FilamentProfile {
+        family: Family::Prusa,
+        name,
+        from: "User".to_string(),
+        inherits: base_name,
+        version: String::new(),
+        filament_id: String::new(),
+        filament_settings_id: Vec::new(),
+        compatible_printers: Vec::new(),
+        filament_vendor: vec![filament.brand.clone()],
+        filament_type: vec![filament_type],
+        settings,
+    };
+    profile.validate()?;
+    Ok((profile, recipe))
+}
+
+/// What the catalogue knows, in PrusaSlicer's settings: one value each, no temperature range.
+fn apply_prusa_values(settings: &mut BTreeMap<String, Value>, filament: &CatalogueFilament, variant: Option<&Variant>) {
+    let mut set = |key: &str, value: String| {
+        settings.insert(key.to_string(), Value::String(value));
+    };
+    if let Some(density) = filament.density.filter(|d| *d > 0.0) {
+        set("filament_density", format_number(density));
+    }
+    if let Some(colour) = variant.and_then(|v| v.color_hex.as_deref()) {
+        let digits = colour.trim().trim_start_matches('#');
+        if digits.len() >= 6 && digits.chars().all(|c| c.is_ascii_hexdigit()) {
+            set("filament_colour", format!("#{}", digits[..6].to_ascii_uppercase()));
+        }
+    }
+
+    let recommended = filament.recommended;
+    let nozzle_range = plausible_range(filament.min_print_temperature, filament.max_print_temperature, &PLAUSIBLE_NOZZLE);
+    let nozzle = recommended.nozzle.filter(|t| PLAUSIBLE_NOZZLE.contains(t));
+    let first_nozzle = recommended.first_layer_nozzle.filter(|t| PLAUSIBLE_NOZZLE.contains(t)).or(nozzle);
+    let bed_range = plausible_range(filament.min_bed_temperature, filament.max_bed_temperature, &PLAUSIBLE_BED);
+    let bed = recommended.bed.filter(|t| PLAUSIBLE_BED.contains(t));
+    let first_bed = recommended.first_layer_bed.filter(|t| PLAUSIBLE_BED.contains(t)).or(bed);
+    for (key, target, range) in [
+        ("temperature", nozzle, nozzle_range),
+        ("first_layer_temperature", first_nozzle, nozzle_range),
+        ("bed_temperature", bed, bed_range),
+        ("first_layer_bed_temperature", first_bed, bed_range),
+    ] {
+        let Some(current) = number(settings, key) else { continue };
+        let wanted = match (target, range) {
+            (Some(target), _) => target,
+            (None, Some((low, high))) => current.clamp(low, high),
+            (None, None) => current,
+        };
+        // PrusaSlicer keeps temperatures as whole degrees.
+        settings.insert(key.to_string(), Value::String(format_number(wanted.round())));
+    }
+
+    if let Some(limit) = filament.max_volumetric_speed.filter(|v| *v > 0.0) {
+        // 0 is PrusaSlicer's "no limit".
+        let wanted = match number(settings, "filament_max_volumetric_speed") {
+            Some(current) if current > 0.0 => current.min(limit),
+            _ => limit,
+        };
+        settings.insert("filament_max_volumetric_speed".to_string(), Value::String(format_number(wanted)));
+    }
+}
+
+fn number(settings: &BTreeMap<String, Value>, key: &str) -> Option<f64> {
+    settings.get(key)?.as_str()?.trim().parse().ok()
 }
 
 /// Studio's rule: a filament name keeps one id across printers; a new name gets a hash.

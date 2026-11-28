@@ -40,7 +40,7 @@ pub enum Error {
     #[error("invalid profile \"{name}\": {}", problems.join("; "))]
     InvalidProfile { name: String, problems: Vec<String> },
 
-    #[error("no Bambu base profile for material \"{material}\" on printer \"{printer}\". Pass a base profile explicitly.")]
+    #[error("no base profile for material \"{material}\" on printer \"{printer}\". Pass a base profile explicitly.")]
     NoBaseProfile { material: String, printer: String },
 
     #[error("the slicer has no \"{base}\" preset for {printer}. Choose another base profile, or leave that nozzle out.")]
@@ -58,7 +58,7 @@ pub enum Error {
     #[error("\"{query}\" is ambiguous: {}", candidates.join(", "))]
     Ambiguous { query: String, candidates: Vec<String> },
 
-    #[error("{0} is only available in 2.85 mm, which Bambu printers cannot use")]
+    #[error("{0} is not made in the filament diameter this printer uses")]
     UnsupportedDiameter(String),
 
     #[error("{product} is a {class}; {slicer} only takes filament profiles")]

@@ -111,6 +111,7 @@ pub fn convert_inherited_with_recipes(
         .map(|printer| {
             let name = format!("{alias} @{printer}");
             let profile = FilamentProfile {
+                family: crate::slicer::Family::Bambu,
                 filament_settings_id: vec![name.clone()],
                 name,
                 from: "User".to_string(),

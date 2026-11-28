@@ -114,7 +114,8 @@ interface Tile {
 }
 
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-const shortModel = (model: string) => model.replace(/^Bambu Lab /, "");
+/** A printer model without its maker, which the rest of the window already makes plain. */
+export const shortModel = (model: string) => model.replace(/^(?:Bambu Lab|Original Prusa) /, "");
 const tileId = (entry: Entry) => `${entry.kind}|${entry.model}|${entry.row.alias}`;
 
 /** The printer model and nozzle a printer preset is for. */
@@ -154,7 +155,8 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, adva
   // The numbers, changes and sharing are about one nozzle's profile; the rest is about the filament.
   const entry = tile.entries.find((e) => e.row.profile_name === picked) ?? tile.entries[0];
   const { row } = entry;
-  const names = tile.entries.map((e) => e.row.profile_name);
+  // One PrusaSlicer preset can stand for several nozzles; it is still one profile.
+  const names = [...new Set(tile.entries.map((e) => e.row.profile_name))];
   const hex = row.hex ?? tile.entries.find((e) => e.row.hex)?.row.hex ?? null;
   const several = tile.entries.length > 1;
   const label = several ? `${tile.alias} (${tile.entries.length} nozzles)` : tile.alias;
@@ -218,7 +220,7 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, adva
                 {e.nozzle}
               </button>
             ) : (
-              e.nozzle && <span key={e.row.profile_name} className="tag">{e.nozzle} mm</span>
+              e.nozzle && <span key={`${e.row.profile_name}|${index}`} className="tag">{e.nozzle} mm</span>
             ),
           )}
           {selected === null &&
@@ -432,7 +434,7 @@ export function InStudioView({
   const removeTicked = () => {
     const picked = ticked.flatMap((tile) => tile.entries);
     onRemove({
-      profileNames: picked.map((e) => e.row.profile_name),
+      profileNames: [...new Set(picked.map((e) => e.row.profile_name))],
       label: ticked.length === 1 ? ticked[0].alias : `${ticked.length} filaments`,
       own: picked.some((e) => e.kind === "own"),
       synced: picked.some((e) => e.row.synced),

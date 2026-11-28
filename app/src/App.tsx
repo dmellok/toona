@@ -21,7 +21,7 @@ import {
 } from "./api";
 import { Browse } from "./Browse";
 import { DetailPanel } from "./DetailPanel";
-import { filamentCount, InStudioView, isProduct, NO_FILTERS, place, sharedKey, type ProductLink, type Removal, type StudioFilters } from "./InStudioView";
+import { filamentCount, InStudioView, isProduct, NO_FILTERS, place, sharedKey, shortModel, type ProductLink, type Removal, type StudioFilters } from "./InStudioView";
 import { guesses } from "./match";
 import { Logo } from "./Logo";
 import { ProfileView } from "./ProfileView";
@@ -590,7 +590,24 @@ export default function App() {
 
   const items: Card[] = catalogue?.items ?? [];
   const studioName = status?.slicer ?? "Bambu Studio";
+  const slicerId = status?.id ?? "bambu-studio";
+  // Offered only when there is a choice to make: more than one slicer on this computer.
+  const slicers = (status?.slicers ?? []).filter((slicer) => slicer.found || slicer.id === slicerId);
   const addedCount = filamentCount(inStudio);
+
+  const switchSlicer = (id: string) => {
+    api
+      .setSlicer(id)
+      .then((next) => {
+        // Printers, what is added and every open page belong to the slicer that was left.
+        setStatus(next);
+        setModel(null);
+        setProfile(null);
+        loadCatalogue(false);
+        refreshInStudio();
+      })
+      .catch((raw) => setSheet({ kind: "error", message: asUiError(raw).message }));
+  };
 
   return (
     <div className="shell">
@@ -605,7 +622,7 @@ export default function App() {
             Browse
           </button>
           <button type="button" className="tab" aria-pressed={view === "studio"} onClick={() => { setView("studio"); setProfile(null); }}>
-            <span>In Studio</span>
+            <span>{slicerId === "bambu-studio" ? "In Studio" : `In ${studioName}`}</span>
             {addedCount > 0 && <span className="count">{addedCount}</span>}
           </button>
         </nav>
@@ -632,10 +649,24 @@ export default function App() {
           </button>
         )}
 
+        {slicers.length > 1 && (
+          <div className="pill pill-select">
+            <span>{studioName}</span>
+            <CaretDown size={14} aria-hidden />
+            <select aria-label="Slicer" value={slicerId} onChange={(event) => switchSlicer(event.target.value)}>
+              {slicers.map((slicer) => (
+                <option key={slicer.id} value={slicer.id}>
+                  {slicer.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {activeModel && (
           <div className="pill pill-select">
             <PrinterIcon size={18} aria-hidden />
-            <span>{activeModel.replace(/^Bambu Lab /, "")}</span>
+            <span>{shortModel(activeModel)}</span>
             <span className="mono">{(targets.length ? targets.map((p) => p.nozzle) : activeNozzles).join(", ")} mm</span>
             {models.length > 1 && (
               <>
@@ -815,7 +846,7 @@ export default function App() {
         </main>
       )}
 
-      <Sheets sheet={sheet} studioName={studioName} close={() => setSheet(null)} />
+      <Sheets sheet={sheet} studioName={studioName} slicerId={slicerId} close={() => setSheet(null)} />
     </div>
   );
 }

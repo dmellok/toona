@@ -33,6 +33,11 @@ async fn status(backend: Shared<'_>) -> UiResult<api::Status> {
 }
 
 #[tauri::command]
+async fn set_slicer(backend: Shared<'_>, id: String) -> UiResult<api::Status> {
+    blocking(&backend, move |b| b.set_slicer(&id)).await
+}
+
+#[tauri::command]
 async fn catalogue(backend: Shared<'_>, refresh: bool) -> UiResult<api::CatalogueDto> {
     blocking(&backend, move |b| b.catalogue(refresh)).await
 }
@@ -285,6 +290,7 @@ pub fn run() {
         .manage(backend)
         .invoke_handler(tauri::generate_handler![
             status,
+            set_slicer,
             catalogue,
             detail,
             install,

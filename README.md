@@ -5,8 +5,8 @@
 <h1 align="center">Toona</h1>
 
 <p align="center">
-  <strong>Add third-party filaments to Bambu Studio.</strong><br>
-  Pick a filament, pick your printer, and it shows up in the slicer and the AMS list.
+  <strong>Add third-party filaments to Bambu Studio and PrusaSlicer.</strong><br>
+  Pick a filament, pick your printer, and it shows up in the slicer.
 </p>
 
 <p align="center">
@@ -17,15 +17,15 @@
 
 ![Toona's Browse view: a search for Polymaker, cards for each filament, and Polylite PLA in Azure Blue ready to add to Bambu Studio](.github/readme/browse.png)
 
-Toona is a desktop app that reads the [Open Filament Database](https://github.com/OpenFilamentCollective/open-filament-database) and writes a filament profile that Bambu Studio lists under Custom, the same kind it makes itself with Create Custom Filament.
+Toona is a desktop app that reads the [Open Filament Database](https://github.com/OpenFilamentCollective/open-filament-database) and writes a filament profile that Bambu Studio lists under Custom, the same kind it makes itself with Create Custom Filament. For PrusaSlicer it writes a filament preset that shows under User presets.
 
 It is an early preview. It runs on macOS on Apple silicon, and the builds are not signed with an Apple developer certificate or notarised. [Download the latest build](https://github.com/dmellok/toona/releases).
 
 ## What it does
 
 - Browses the catalogue by brand, material and name, or by scanning a spool's barcode.
-- Builds each profile on one of Bambu Studio's own presets and changes only what the filament needs, so you can see every setting that differs and why.
-- Backs up before it writes, and refuses to write while Bambu Studio is open.
+- Builds each profile on one of the slicer's own presets and changes only what the filament needs, so you can see every setting that differs and why.
+- Backs up before it writes, and refuses to write while the slicer is open.
 - Lists what it added, lets you edit or remove it, and repairs profiles that were imported in a form Bambu Studio hides.
 - Optionally, with a GitHub sign-in, shares a profile's changes with other people and shows which shared ones worked for them. G-code is never taken from, or sent to, anyone.
 
@@ -40,6 +40,10 @@ Each profile is built on one of Bambu Studio's own presets. Turn on Advanced and
 The In Studio view lists what Toona added, the custom filaments you made yourself, and imported profiles that Bambu Studio hides from the AMS list, which Toona can repair.
 
 ![The In Studio view: a filament Toona added, custom filaments made in Bambu Studio, and imported profiles with a Fix button](.github/readme/in-studio.png)
+
+## PrusaSlicer
+
+With both slicers installed, a menu in the header switches between them. PrusaSlicer ties a filament to printers by a condition instead of keeping a file per nozzle, so Toona builds on the preset PrusaSlicer shows for your printer and keeps that preset's condition: one filament can serve several nozzles, and where a printer needs its own it is named PrusaSlicer's way, such as `eSUN PLA+ Orange @MK4S HF0.4`. PrusaSlicer support is new and has been tried on PrusaSlicer 2.9 with Prusa's own printers.
 
 ## What it sends
 
