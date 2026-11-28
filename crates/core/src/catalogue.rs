@@ -104,6 +104,8 @@ struct RawVariant {
     filament_id: String,
     color_hex: Option<String>,
     #[serde(default)]
+    color_hexes: Vec<String>,
+    #[serde(default)]
     traits: HashMap<String, bool>,
 }
 
@@ -123,6 +125,11 @@ pub struct Variant {
     pub slug: String,
     /// `#RRGGBB`, when the database has one.
     pub color_hex: Option<String>,
+    /// Every colour of a filament that has more than one, in the database's order, each
+    /// `#RRGGBB`. Empty for a filament of one colour.
+    pub color_hexes: Vec<String>,
+    /// The colours run into each other along the filament, rather than lying side by side in it.
+    pub gradual: bool,
     /// Retail barcodes (GTIN/EAN/UPC digits) of the spools sold in this colour.
     pub barcodes: Vec<String>,
 }
@@ -303,6 +310,12 @@ impl Catalogue {
                         name: v.name.clone(),
                         slug: v.slug.clone(),
                         color_hex: v.color_hex.as_deref().and_then(normalize_hex),
+                        color_hexes: {
+                            let mut all: Vec<String> = v.color_hexes.iter().filter_map(|hex| normalize_hex(hex)).collect();
+                            all.dedup();
+                            if all.len() > 1 { all } else { Vec::new() }
+                        },
+                        gradual: v.traits.get("gradual_color_change").copied().unwrap_or(false),
                         barcodes: barcodes_by_variant.get(v.id.as_str()).cloned().unwrap_or_default(),
                     })
                     .collect();

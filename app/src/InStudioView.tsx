@@ -198,8 +198,8 @@ function FilamentTile({ tile, showModel, missing, selected, onSelect, busy, adva
             <div className="title">{tile.alias}</div>
           )}
           {advanced && synced && (
-            <span className="tag-icon" title="Synced to your Bambu account">
-              <CloudCheck size={16} aria-label="Synced to your Bambu account" />
+            <span className="tag-icon" title="Synced to your account">
+              <CloudCheck size={16} aria-label="Synced to your account" />
             </span>
           )}
         </div>

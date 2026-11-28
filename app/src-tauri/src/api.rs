@@ -20,7 +20,7 @@ use toona_core::{
 };
 
 /// The slicers the window offers, in the order it prefers them when nothing was chosen.
-const SLICERS: &[SlicerKind] = &[SlicerKind::BambuStudio, SlicerKind::PrusaSlicer];
+const SLICERS: &[SlicerKind] = &[SlicerKind::BambuStudio, SlicerKind::OrcaSlicer, SlicerKind::PrusaSlicer];
 
 /// The catalogue is published daily; a cached copy is refreshed after this long.
 const CATALOGUE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -138,7 +138,7 @@ pub struct CardDto {
     pub material: String,
     pub resin: bool,
     pub colours: usize,
-    pub stripes: Vec<String>,
+    pub stripes: Vec<StripeDto>,
     pub discontinued: bool,
     pub added: bool,
 }
@@ -150,12 +150,23 @@ pub struct CatalogueDto {
     pub items: Vec<CardDto>,
 }
 
+/// One colour on a catalogue card: a single colour, or the several of a multi-colour filament.
+#[derive(Serialize)]
+pub struct StripeDto {
+    pub hexes: Vec<String>,
+    pub gradual: bool,
+}
+
 #[derive(Serialize)]
 pub struct VariantDto {
     pub name: String,
     /// The filament name the slicer shows for this colour.
     pub alias: String,
     pub hex: Option<String>,
+    /// All its colours when it has more than one; empty otherwise.
+    pub hexes: Vec<String>,
+    /// Its colours run into each other along the filament.
+    pub gradual: bool,
     /// Already in the slicer, put there by Toona.
     pub added: bool,
 }
@@ -552,10 +563,15 @@ impl Backend {
             .filaments()
             .iter()
             .map(|filament| {
-                let mut stripes: Vec<String> = Vec::new();
-                for hex in filament.variants.iter().filter_map(|v| clean_hex(v.color_hex.as_deref())) {
-                    if !stripes.contains(&hex) {
-                        stripes.push(hex);
+                let mut stripes: Vec<StripeDto> = Vec::new();
+                for variant in &filament.variants {
+                    let hexes = match clean_hex(variant.color_hex.as_deref()) {
+                        _ if !variant.color_hexes.is_empty() => variant.color_hexes.clone(),
+                        Some(hex) => vec![hex],
+                        None => continue,
+                    };
+                    if !stripes.iter().any(|stripe| stripe.hexes == hexes) {
+                        stripes.push(StripeDto { hexes, gradual: variant.gradual });
                     }
                     if stripes.len() == CARD_STRIPES {
                         break;
@@ -708,6 +724,8 @@ impl Backend {
                     VariantDto {
                         name: variant.name.clone(),
                         hex: clean_hex(variant.color_hex.as_deref()),
+                        hexes: variant.color_hexes.clone(),
+                        gradual: variant.gradual,
                         added: added_aliases.contains(&alias.as_str()),
                         alias,
                     }
@@ -1200,6 +1218,16 @@ impl Backend {
             unusable,
             added,
         }
+    }
+
+    /// How Toona's own profile for a filament did on one printer model and nozzle.
+    pub fn standard_score(&self, key: &str, model: &str, nozzle: &str) -> UiResult<crate::community::Standard> {
+        self.community.standard(key, model, nozzle, self.kind().id())
+    }
+
+    /// Says how printing with Toona's own profile went.
+    pub fn confirm_standard(&self, key: &str, outcome: &str, model: &str, nozzle: &str) -> UiResult<crate::community::Standard> {
+        self.community.confirm_standard(key, outcome, model, nozzle, self.kind().id())
     }
 
     /// Profiles people shared for a filament on one printer model and nozzle, best first.

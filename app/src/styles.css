@@ -1413,6 +1413,16 @@ button.tag[aria-pressed="true"] {
   gap: 8px;
 }
 
+.standard-score {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
 .shared-head {
   display: flex;
   align-items: center;

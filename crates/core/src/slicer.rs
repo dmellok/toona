@@ -16,7 +16,7 @@ const SIGNED_OUT_FOLDER: &str = "default";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlicerKind {
     BambuStudio,
-    /// Same profile family as Bambu Studio. Not verified against a real install yet.
+    /// Same profile family as Bambu Studio, with system presets from every vendor.
     OrcaSlicer,
     PrusaSlicer,
 }
@@ -267,6 +267,7 @@ impl Slicer {
 
     pub fn system_library(&self) -> Result<SystemLibrary> {
         match self.kind.family() {
+            Family::Bambu if self.kind == SlicerKind::OrcaSlicer => SystemLibrary::load_orca(&self.config_dir.join("system")),
             Family::Bambu => SystemLibrary::load(&self.system_vendor_dir()),
             Family::Prusa => SystemLibrary::load_prusa(&self.config_dir),
         }

@@ -10,6 +10,7 @@ pub mod convert;
 pub mod error;
 pub mod install;
 pub mod mapping;
+mod orca;
 pub mod profile;
 pub mod prusa;
 pub mod recipe;

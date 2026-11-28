@@ -44,7 +44,7 @@ fn filament(brand: &str, name: &str, material: &str) -> CatalogueFilament {
         diameters: vec![1.75, 2.85],
         slicer_profiles: BTreeMap::new(),
         traits: BTreeSet::new(),
-        variants: vec![Variant { name: "Orange".into(), slug: "orange".into(), color_hex: Some("ff6720".into()), barcodes: Vec::new() }],
+        variants: vec![Variant { name: "Orange".into(), slug: "orange".into(), color_hex: Some("ff6720".into()), color_hexes: Vec::new(), gradual: false, barcodes: Vec::new() }],
     }
 }
 

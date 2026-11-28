@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Check, CheckCircle, DownloadSimple, Package, PencilSimple, SealCheck, Trash, Warning, X } from "@phosphor-icons/react";
-import type { Detail, Printer, Shared, Spec, Variant } from "./api";
+import type { Detail, Printer, Shared, Spec, Standard, Variant } from "./api";
 import { BasePicker } from "./BasePicker";
-import { Community } from "./Community";
+import { Community, StandardScore } from "./Community";
 import { Changes, withRange } from "./Changes";
 import { dotStyle, swatchStyle } from "./colour";
 
@@ -36,6 +36,9 @@ interface Props {
   /** Profiles other people shared for this filament on the chosen printer. */
   shared: Shared[];
   signedIn: boolean;
+  /** How Toona's own profile did on the chosen printer; null when that isn't known. */
+  standard: Standard | null;
+  onConfirmStandard: (outcome: "worked" | "problems") => void;
   onAddShared: (version: Shared) => void;
   onConfirm: (version: Shared, outcome: "worked" | "problems") => void;
   onHistory: (version: Shared) => void;
@@ -217,14 +220,14 @@ export function DetailPanel(props: Props) {
         <ArrowLeft size={18} aria-hidden />
         <span>All filaments</span>
       </button>
-      <div className="swatch" style={swatchStyle(variant?.hex ?? null)}>
+      <div className="swatch" style={swatchStyle(variant ?? null)}>
         <div className="swatch-top">
           <span>{detail.brand}</span>
           <span>{detail.material}</span>
         </div>
         <div>
           <div className="swatch-name">{variant?.name ?? detail.name}</div>
-          <div className="swatch-hex">{variant ? (variant.hex ?? "Colour not listed") : "No colour chosen"}</div>
+          <div className="swatch-hex">{variant ? (variant.hexes.length ? variant.hexes.join(variant.gradual ? " → " : " + ") : (variant.hex ?? "Colour not listed")) : "No colour chosen"}</div>
         </div>
       </div>
 
@@ -251,7 +254,7 @@ export function DetailPanel(props: Props) {
                   aria-pressed={v.name === variant?.name}
                   onClick={() => props.onColour(v.name === variant?.name ? null : v.name)}
                 >
-                  <span style={dotStyle(v.hex)} />
+                  <span style={dotStyle(v)} />
                 </button>
               ))}
             </div>
@@ -392,6 +395,10 @@ export function DetailPanel(props: Props) {
               </div>
             )}
           </div>
+        )}
+
+        {props.standard && !blocked && (
+          <StandardScore score={props.standard} canAnswer={added} busy={props.busy} onConfirm={props.onConfirmStandard} />
         )}
 
         <Community

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowsClockwise, Check, MagnifyingGlass, Plus, X } from "@phosphor-icons/react";
 import { api, type BarcodeMatch, type Card } from "./api";
+import { fill } from "./colour";
 import { useNearEnd } from "./useNearEnd";
 
 /** Cards drawn at first, and added each time the end of the list comes into view. */
@@ -290,8 +291,8 @@ export function Browse(props: Props) {
             onClick={() => onSelect(item.key)}
           >
             <div className="stripes" aria-hidden>
-              {item.stripes.map((hex) => (
-                <span key={hex} style={{ background: hex }} />
+              {item.stripes.map((stripe) => (
+                <span key={stripe.hexes.join()} style={{ background: fill(stripe.hexes, stripe.gradual, 180) }} />
               ))}
             </div>
             <div className="card-body">

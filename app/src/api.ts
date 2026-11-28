@@ -39,7 +39,8 @@ export interface Card {
   material: string;
   resin: boolean;
   colours: number;
-  stripes: string[];
+  /** One for each colour it comes in: a single colour, or the several of a multi-colour filament. */
+  stripes: { hexes: string[]; gradual: boolean }[];
   discontinued: boolean;
   added: boolean;
 }
@@ -54,6 +55,10 @@ export interface Variant {
   name: string;
   alias: string;
   hex: string | null;
+  /** All its colours when it has more than one; empty otherwise. */
+  hexes: string[];
+  /** Its colours run into each other along the filament. */
+  gradual: boolean;
   added: boolean;
 }
 
@@ -291,6 +296,13 @@ export interface SignIn {
   interval: number;
 }
 
+/** How Toona's own profile for a filament did, for the people who printed with it on one printer and nozzle. */
+export interface Standard {
+  worked: number;
+  problems: number;
+  mine: "worked" | "problems" | null;
+}
+
 /** A profile version someone shared. */
 export interface Shared {
   id: number;
@@ -403,6 +415,8 @@ const mockShared: Shared[] = [
     changes: [{ key: "filament_flow_ratio", layer: "community", from: "0.98", to: "0.96" }],
   },
 ];
+
+const mockStandard: Standard = { worked: 11, problems: 1, mine: null };
 
 const mockOwn: Own = {
   profile_name: "eSUN PLA Plus @Bambu Lab X2D 0.4 nozzle", alias: "eSUN PLA Plus", printer: "Bambu Lab X2D 0.4 nozzle",
@@ -599,6 +613,15 @@ export const api = {
   },
   community: (key: string, model: string, nozzle: string): Promise<Shared[]> =>
     inApp ? invoke("community", { key, model, nozzle }) : Promise.resolve(mockShared.map((v) => ({ ...v }))),
+  standard: (key: string, model: string, nozzle: string): Promise<Standard> =>
+    inApp ? invoke("standard", { key, model, nozzle }) : Promise.resolve({ ...mockStandard }),
+  confirmStandard: async (key: string, outcome: "worked" | "problems", model: string, nozzle: string): Promise<Standard> => {
+    if (inApp) return invoke("confirm_standard", { key, outcome, model, nozzle });
+    if (mockStandard.mine) mockStandard[mockStandard.mine] -= 1;
+    mockStandard[outcome] += 1;
+    mockStandard.mine = outcome;
+    return { ...mockStandard };
+  },
   installCommunity: (request: InstallRequest, versionId: number): Promise<InstallResult> =>
     inApp ? invoke("install_community", { request, versionId }) : mockWrite(request.allow_cloud_sync, "install-dry"),
   share: (profileName: string, note: string): Promise<Shared> =>

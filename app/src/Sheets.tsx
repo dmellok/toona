@@ -49,6 +49,8 @@ function size(bytes: number): string {
 
 export function Sheets({ sheet, studioName, slicerId, close }: Props) {
   const prusa = slicerId === "prusa-slicer";
+  // The account a slicer syncs filaments with.
+  const account = slicerId === "orca-slicer" ? "Orca Cloud" : "Bambu";
   const [dontAsk, setDontAsk] = useState(false);
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
@@ -136,9 +138,9 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
           <div>
             <CloudArrowUp size={32} aria-hidden />
           </div>
-          <h2 id="sheet-title">This syncs to your Bambu account</h2>
+          <h2 id="sheet-title">This syncs to your {account} account</h2>
           <p>
-            {studioName} uploads new filaments to Bambu Cloud the next time it opens, the same as ones you create
+            {studioName} uploads new filaments to {account === "Bambu" ? "Bambu Cloud" : account} the next time it opens, the same as ones you create
             there. To remove one for good later, delete it in {studioName}.
           </p>
           <label className="check">
@@ -219,7 +221,7 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
           )}
           {sheet.synced && (
             <p>
-              Your Bambu account holds a copy, so {studioName}'s next sync will bring it back. To be rid of it for
+              Your {account} account holds a copy, so {studioName}'s next sync will bring it back. To be rid of it for
               good, delete it inside {studioName} instead.
             </p>
           )}
@@ -244,7 +246,7 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
           </p>
           {sheet.stillInCloud && (
             <p>
-              Your Bambu account still holds a copy, so {studioName}'s next sync will bring it back. To be rid of it
+              Your {account} account still holds a copy, so {studioName}'s next sync will bring it back. To be rid of it
               for good, delete it inside {studioName}.
             </p>
           )}
@@ -410,7 +412,7 @@ export function Sheets({ sheet, studioName, slicerId, close }: Props) {
             {sheet.backup.note ? `, ${sheet.backup.note.charAt(0).toLowerCase()}${sheet.backup.note.slice(1)}` : ""}.
             Anything added or changed since then, in Toona or in {studioName}, is undone.
           </p>
-          <p>How things are now is backed up first. If {studioName} syncs with your Bambu account, the next sync may change some profiles again.</p>
+          <p>How things are now is backed up first. If {studioName} syncs with your {account} account, the next sync may change some profiles again.</p>
           <div className="sheet-buttons">
             <button type="button" autoFocus onClick={close}>
               Cancel

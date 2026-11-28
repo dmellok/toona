@@ -300,7 +300,7 @@ pub fn build_profile_with_recipe(
         name,
         from: "User".to_string(),
         inherits: String::new(),
-        version: library.version.clone(),
+        version: library.version_for(&base_name),
         compatible_printers: vec![request.printer.to_string()],
         filament_vendor: vec![filament.brand.clone()],
         filament_type: vec![filament_type],

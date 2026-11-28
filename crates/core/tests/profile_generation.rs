@@ -129,6 +129,8 @@ fn catalogue() -> Catalogue {
             { "id": "v-red", "name": "Fire Red", "slug": "fire_red", "filament_id": "f-plus", "color_hex": "#d6001c" },
             { "id": "v-gold", "name": "Gold", "slug": "gold", "filament_id": "f-silk", "color_hex": "#C9A227",
               "traits": { "silk": true } },
+            { "id": "v-dual", "name": "Dual Black-Gold", "slug": "dual_black_gold", "filament_id": "f-silk", "color_hex": "#000000",
+              "color_hexes": ["#000000", "b89f4c"], "traits": { "silk": true, "gradual_color_change": true } },
             { "id": "v-thick", "name": "Black", "slug": "black", "filament_id": "f-285", "color_hex": "#000000" }
         ],
         "sizes": [
@@ -658,4 +660,17 @@ fn a_converted_profile_records_the_users_own_changes_over_the_preset_it_inherits
         rebuilt.remove(key);
     }
     assert_eq!(rebuilt, profile.settings);
+}
+
+#[test]
+fn a_filament_of_several_colours_keeps_them_all() {
+    let catalogue = catalogue();
+    let silk = catalogue.find("esun/PLA/esilk_pla").unwrap();
+    let dual = silk.variants.iter().find(|v| v.name == "Dual Black-Gold").unwrap();
+    assert_eq!(dual.color_hex.as_deref(), Some("#000000"));
+    assert_eq!(dual.color_hexes, ["#000000", "#B89F4C"]);
+    assert!(dual.gradual);
+    // One colour is not a list of one.
+    let gold = silk.variants.iter().find(|v| v.name == "Gold").unwrap();
+    assert!(gold.color_hexes.is_empty() && !gold.gradual);
 }

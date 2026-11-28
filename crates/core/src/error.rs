@@ -71,7 +71,7 @@ pub enum Error {
     ForeignFile { path: PathBuf },
 
     #[error(
-        "the slicer syncs user presets to Bambu Cloud for account {user_id}; installing would upload the new profiles at its next start. Confirm cloud sync to proceed, or export a bundle instead."
+        "the slicer syncs user presets to its cloud for account {user_id}; installing would upload the new profiles at its next start. Confirm cloud sync to proceed, or export a bundle instead."
     )]
     CloudSyncNotConfirmed { user_id: String },
 

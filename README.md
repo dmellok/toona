@@ -5,7 +5,7 @@
 <h1 align="center">Toona</h1>
 
 <p align="center">
-  <strong>Add third-party filaments to Bambu Studio and PrusaSlicer.</strong><br>
+  <strong>Add third-party filaments to Bambu Studio, OrcaSlicer and PrusaSlicer.</strong><br>
   Pick a filament, pick your printer, and it shows up in the slicer.
 </p>
 
@@ -35,6 +35,8 @@ If you try the Windows or Linux build, an [issue](https://github.com/dmellok/too
 - Builds each profile on one of the slicer's own presets and changes only what the filament needs, so you can see every setting that differs and why.
 - Backs up before it writes, and refuses to write while the slicer is open.
 - Lists what it added, lets you edit or remove it, and repairs profiles that were imported in a form Bambu Studio hides.
+- Shows how each profile printed for other people on your printer and nozzle, and with a GitHub sign-in lets you say how it went for you.
+- Shows multi-colour filaments with all their colours: a blend for ones that change along the spool, bands for dual- and tri-colour ones.
 - Optionally, with a GitHub sign-in, shares a profile's changes with other people and shows which shared ones worked for them. G-code is never taken from, or sent to, anyone.
 
 ## Every setting, and where it came from
@@ -49,9 +51,13 @@ The In Studio view (In PrusaSlicer, when that is the slicer chosen) lists what T
 
 ![The In Studio view: a filament Toona added, custom filaments made in Bambu Studio, and imported profiles with a Fix button](.github/readme/in-studio.png)
 
+## OrcaSlicer
+
+OrcaSlicer takes the same kind of profile as Bambu Studio, and Toona reads the built-in presets of every printer vendor OrcaSlicer has set up, not only Bambu Lab's. Where OrcaSlicer's own filament library already has a preset for a brand's filament, the profile is built on that one. It works with OrcaSlicer 2.5; printers you made yourself in OrcaSlicer are not offered yet, and syncing with Orca Cloud has not been tried.
+
 ## PrusaSlicer
 
-With both slicers installed, a menu in the header switches between them. PrusaSlicer ties a filament to printers by a condition instead of keeping a file per nozzle, so Toona builds on the preset PrusaSlicer shows for your printer and keeps that preset's condition: one filament can serve several nozzles, and where a printer needs its own it is named PrusaSlicer's way, such as `eSUN PLA+ Orange @MK4S HF0.4`. PrusaSlicer support is new and has been tried on PrusaSlicer 2.9 with Prusa's own printers.
+With more than one slicer installed, a menu in the header switches between them. PrusaSlicer ties a filament to printers by a condition instead of keeping a file per nozzle, so Toona builds on the preset PrusaSlicer shows for your printer and keeps that preset's condition: one filament can serve several nozzles, and where a printer needs its own it is named PrusaSlicer's way, such as `eSUN PLA+ Orange @MK4S HF0.4`. PrusaSlicer support is new and has been tried on PrusaSlicer 2.9 with Prusa's own printers.
 
 ## What it sends
 

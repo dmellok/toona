@@ -17,6 +17,7 @@ import {
   type InStudio,
   type InstallRequest,
   type Shared,
+  type Standard,
   type Status,
 } from "./api";
 import { Browse } from "./Browse";
@@ -94,6 +95,8 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null);
   /** Shared profiles for one filament; shown only while that filament is the one on screen. */
   const [shared, setShared] = useState<{ key: string; versions: Shared[] }>({ key: "", versions: [] });
+  /** How Toona's own profile for the selected filament did on the chosen printer and nozzle. */
+  const [standard, setStandard] = useState<{ key: string; score: Standard | null }>({ key: "", score: null });
 
   /** What the In Studio list is narrowed to. All but the search is kept between sessions. */
   const [studioFilters, setStudioFilters] = useState<StudioFilters>(() => ({
@@ -260,6 +263,10 @@ export default function App() {
       .community(selectedKey, activeModel, firstNozzle)
       .then((versions) => request === sharedRequest.current && setShared({ key: selectedKey, versions }))
       .catch(() => request === sharedRequest.current && setShared({ key: selectedKey, versions: [] }));
+    api
+      .standard(selectedKey, activeModel, firstNozzle)
+      .then((score) => request === sharedRequest.current && setStandard({ key: selectedKey, score }))
+      .catch(() => request === sharedRequest.current && setStandard({ key: selectedKey, score: null }));
     // `user` is here so each person's own answers are loaded after signing in or out.
   }, [community, selectedKey, activeModel, firstNozzle, user?.id]);
 
@@ -570,6 +577,19 @@ export default function App() {
     }
   };
 
+  // `signedIn` is passed when this continues straight after signing in, as with sharing.
+  const confirmStandard = async (outcome: "worked" | "problems", signedIn = user !== null) => {
+    if (!selectedKey || !activeModel || !firstNozzle) return;
+    if (!signedIn) return void signIn(() => confirmStandard(outcome, true));
+    const key = selectedKey;
+    try {
+      const score = await api.confirmStandard(key, outcome, activeModel, firstNozzle);
+      setStandard({ key, score });
+    } catch (raw) {
+      setSheet({ kind: "error", message: asUiError(raw).message });
+    }
+  };
+
   // Ask once for each product, printer and nozzle in the slicer how many profiles were shared for it.
   useEffect(() => {
     if (!community || !inStudio) return;
@@ -803,6 +823,8 @@ export default function App() {
               onExport={exportBundle}
               shared={shared.key === detail.key ? shared.versions : []}
               signedIn={user !== null}
+              standard={standard.key === detail.key ? standard.score : null}
+              onConfirmStandard={confirmStandard}
               onAddShared={addShared}
               onConfirm={confirmShared}
               onHistory={showHistory}

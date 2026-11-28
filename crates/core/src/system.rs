@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
+use crate::orca;
 use crate::prusa;
 use crate::slicer::Family;
 
@@ -133,8 +134,11 @@ pub struct SystemLibrary {
     machines: Vec<MachinePreset>,
     /// PrusaSlicer only: the printer presets, for working out which filaments show for which.
     printer_presets: HashMap<String, Map<String, Value>>,
-    /// PrusaSlicer only: the filament presets that show for each printer asked about so far.
+    /// The filament presets that show for each printer asked about so far, where that takes
+    /// working out: PrusaSlicer and OrcaSlicer.
     shown: Mutex<HashMap<String, Arc<Vec<String>>>>,
+    /// OrcaSlicer: a filament that names no printers is offered to all of them.
+    open_to_all: bool,
 }
 
 impl SystemLibrary {
@@ -182,6 +186,27 @@ impl SystemLibrary {
         Ok(Self { version, filaments, machines, ..Self::default() })
     }
 
+    /// Loads every vendor in OrcaSlicer's `system` folder.
+    pub fn load_orca(system_dir: &Path) -> Result<Self> {
+        let loaded = orca::load(system_dir)?;
+        Ok(Self {
+            version: loaded.version,
+            filaments: loaded.filaments,
+            machines: loaded.machines,
+            open_to_all: true,
+            ..Self::default()
+        })
+    }
+
+    /// The version a profile built on `filament` is stamped with: that of the vendor
+    /// bundle the preset came from.
+    pub fn version_for(&self, filament: &str) -> String {
+        self.filaments
+            .get(filament)
+            .and_then(|preset| preset.get("version")?.as_str())
+            .map_or_else(|| self.version.clone(), normalize_version)
+    }
+
     /// Loads PrusaSlicer's vendor bundles and the user's printer presets from its settings folder.
     pub fn load_prusa(config_dir: &Path) -> Result<Self> {
         let loaded = prusa::load(config_dir)?;
@@ -202,7 +227,7 @@ impl SystemLibrary {
             filaments: loaded.filaments,
             machines,
             printer_presets: loaded.printer_presets,
-            shown: Mutex::default(),
+            ..Self::default()
         })
     }
 
@@ -256,6 +281,53 @@ impl SystemLibrary {
         names
     }
 
+    /// OrcaSlicer's system filament presets that show for `printer`: the ones made for it
+    /// first, then the ones offered to every printer, each sorted by name.
+    fn open_for_printer(&self, printer: &str) -> Arc<Vec<String>> {
+        let mut shown = self.shown.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(known) = shown.get(printer) {
+            return known.clone();
+        }
+        let mut names: Vec<(bool, &String)> = self
+            .filaments
+            .iter()
+            .filter(|(_, preset)| preset.get("instantiation").and_then(Value::as_str) == Some("true"))
+            .filter_map(|(name, _)| {
+                let listed: Vec<&str> = match self.inherited(name, "compatible_printers", 0) {
+                    Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).collect(),
+                    Some(Value::String(one)) if !one.is_empty() => vec![one.as_str()],
+                    _ => Vec::new(),
+                };
+                (listed.is_empty() || listed.contains(&printer)).then_some((listed.is_empty(), name))
+            })
+            .collect();
+        names.sort();
+        let names = Arc::new(names.into_iter().map(|(_, name)| name.clone()).collect::<Vec<_>>());
+        shown.insert(printer.to_string(), names.clone());
+        names
+    }
+
+    /// A setting as a preset has it or takes it from the presets it is built on.
+    fn inherited(&self, name: &str, key: &str, depth: usize) -> Option<&Value> {
+        let preset = self.filaments.get(name)?;
+        if let Some(own) = preset.get(key) {
+            return Some(own);
+        }
+        if depth > MAX_CHAIN_DEPTH {
+            return None;
+        }
+        let includes = match preset.get("include") {
+            Some(Value::Array(many)) => many.iter().filter_map(Value::as_str).collect(),
+            Some(Value::String(one)) => vec![one.as_str()],
+            _ => Vec::new(),
+        };
+        includes
+            .into_iter()
+            .rev()
+            .chain(preset.get("inherits").and_then(Value::as_str).filter(|parent| !parent.is_empty()))
+            .find_map(|parent| self.inherited(parent, key, depth + 1))
+    }
+
     /// A system filament preset's settings as a profile built on it starts out: resolved
     /// through its whole chain, without the fields a profile keeps apart from its settings.
     pub fn base_settings(&self, name: &str) -> Result<BTreeMap<String, Value>> {
@@ -270,6 +342,10 @@ impl SystemLibrary {
     pub fn filaments_for_printer(&self, printer: &str) -> Vec<&str> {
         if self.family == Family::Prusa {
             let shown = self.shown_for_printer(printer);
+            return shown.iter().filter_map(|name| self.filaments.get_key_value(name).map(|(key, _)| key.as_str())).collect();
+        }
+        if self.open_to_all {
+            let shown = self.open_for_printer(printer);
             return shown.iter().filter_map(|name| self.filaments.get_key_value(name).map(|(key, _)| key.as_str())).collect();
         }
         let mut names: Vec<&str> = self
@@ -388,12 +464,12 @@ fn apply_settings(target: &mut BTreeMap<String, Value>, preset: &Map<String, Val
     }
 }
 
-fn read_object(path: &Path) -> Result<Map<String, Value>> {
+pub(crate) fn read_object(path: &Path) -> Result<Map<String, Value>> {
     let text = fs::read_to_string(path).map_err(Error::read(path))?;
     serde_json::from_str(&text).map_err(Error::json(path))
 }
 
-fn json_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+pub(crate) fn json_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {

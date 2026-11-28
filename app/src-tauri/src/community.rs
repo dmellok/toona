@@ -69,6 +69,15 @@ pub struct Link {
     pub profile_id: u64,
 }
 
+/// How Toona's own profile for a product did for the people who printed with it.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct Standard {
+    pub worked: u64,
+    pub problems: u64,
+    /// The signed-in person's own answer.
+    pub mine: Option<String>,
+}
+
 /// A shared version as the server sends it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Version {
@@ -345,6 +354,26 @@ impl Community {
             encode(slicer, false)
         );
         Self::parse(self.expect("GET", &path, None)?.get("versions").cloned().unwrap_or(Value::Null))
+    }
+
+    fn standard_path(key: &str) -> String {
+        format!("/products/{}/standard", encode(key, true))
+    }
+
+    pub fn standard(&self, key: &str, printer: &str, nozzle: &str, slicer: &str) -> UiResult<Standard> {
+        let path = format!(
+            "{}?printer={}&nozzle={}&slicer={}",
+            Self::standard_path(key),
+            encode(printer, false),
+            encode(nozzle, false),
+            encode(slicer, false)
+        );
+        Self::parse(self.expect("GET", &path, None)?)
+    }
+
+    pub fn confirm_standard(&self, key: &str, outcome: &str, printer: &str, nozzle: &str, slicer: &str) -> UiResult<Standard> {
+        let body = json!({ "outcome": outcome, "printer": printer, "nozzle": nozzle, "slicer": slicer });
+        Self::parse(self.expect("POST", &Self::standard_path(key), Some(body))?)
     }
 
     pub fn version(&self, id: u64) -> UiResult<Version> {

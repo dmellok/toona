@@ -41,7 +41,6 @@ struct Cli {
 #[derive(Clone, Copy, ValueEnum)]
 enum SlicerArg {
     Bambu,
-    /// Experimental: not verified against a real install
     Orca,
     Prusa,
 }
@@ -409,7 +408,7 @@ fn install_command(context: &Context_, catalogue: &Catalogue, args: &InstallArgs
     }
     if report.will_cloud_sync {
         println!(
-            "{} syncs user presets for account {}: it {} upload {} to Bambu Cloud at its next start.",
+            "{} syncs user presets for account {}: it {} upload {} to its cloud at its next start.",
             slicer.kind.display_name(),
             conf.preset_folder,
             if report.dry_run { "would" } else { "will" },
@@ -497,7 +496,7 @@ fn convert_command(context: &Context_, args: &ConvertArgs) -> Result<()> {
     }
     if report.will_cloud_sync {
         println!(
-            "{} syncs user presets for account {}: it {} upload the new profiles to Bambu Cloud at its next start.",
+            "{} syncs user presets for account {}: it {} upload the new profiles to its cloud at its next start.",
             slicer.kind.display_name(),
             conf.preset_folder,
             if report.dry_run { "would" } else { "will" },
@@ -555,7 +554,7 @@ fn uninstall_command(context: &Context_, query: &str) -> Result<()> {
     }
     if !report.cloud_synced.is_empty() {
         println!(
-            "Bambu Cloud still holds a copy of: {}. {} will download {} again at its next sync; to remove {} for good, delete {} inside {}.",
+            "The cloud still holds a copy of: {}. {} will download {} again at its next sync; to remove {} for good, delete {} inside {}.",
             report.cloud_synced.join(", "),
             slicer.kind.display_name(),
             if report.cloud_synced.len() == 1 { "it" } else { "them" },

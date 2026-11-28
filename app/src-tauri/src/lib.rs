@@ -155,6 +155,22 @@ async fn community(backend: Shared<'_>, key: String, model: String, nozzle: Stri
 }
 
 #[tauri::command]
+async fn standard(backend: Shared<'_>, key: String, model: String, nozzle: String) -> UiResult<community::Standard> {
+    blocking(&backend, move |b| b.standard_score(&key, &model, &nozzle)).await
+}
+
+#[tauri::command]
+async fn confirm_standard(
+    backend: Shared<'_>,
+    key: String,
+    outcome: String,
+    model: String,
+    nozzle: String,
+) -> UiResult<community::Standard> {
+    blocking(&backend, move |b| b.confirm_standard(&key, &outcome, &model, &nozzle)).await
+}
+
+#[tauri::command]
 async fn install_community(
     backend: Shared<'_>,
     request: api::InstallRequest,
@@ -312,6 +328,8 @@ pub fn run() {
             install_community,
             share,
             confirm,
+            standard,
+            confirm_standard,
             link_product,
             profile,
             edit,
